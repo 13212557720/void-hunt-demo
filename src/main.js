@@ -37,6 +37,8 @@ const MAX_RINGS = 64;
 const MAX_BOLTS = 80;
 const MAX_FLOATING_TEXTS = 90;
 
+const HERO_SPRITE = createHeroSprite();
+
 const PHASES = {
   phase1: {
     key: "phase1",
@@ -265,6 +267,7 @@ function createGame() {
       velocityX: 0,
       velocityY: 0,
       facingAngle: 0,
+      facingSign: 1,
       ultimate: {
         level: 0,
         charges: 0,
@@ -460,6 +463,9 @@ function updatePlayer(dt) {
     player.velocityY = 0;
   } else {
     player.facingAngle = Math.atan2(player.velocityY, player.velocityX);
+    if (dx !== 0) {
+      player.facingSign = dx < 0 ? -1 : 1;
+    }
   }
 
   player.x = clamp(player.x + player.velocityX * dt, player.radius, WORLD.width - player.radius);
@@ -1879,6 +1885,85 @@ function drawPlayer() {
     }
   }
 
+  if (!drawHeroSprite(player)) {
+    drawFallbackPlayerBody(player);
+  }
+
+  if (player.shield > 0 || shieldLevel > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = player.shield > 0 ? "rgba(85, 247, 255, 0.72)" : "rgba(85, 247, 255, 0.18)";
+    ctx.lineWidth = player.shield > 0 ? 3 : 1;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius + 12 + Math.sin(game.elapsed * 5) * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawHeroSprite(player) {
+  if (!HERO_SPRITE.loaded || !HERO_SPRITE.source) return false;
+
+  const moving = Math.hypot(player.velocityX, player.velocityY) > 12;
+  const frames = moving ? HERO_SPRITE.frames.move : HERO_SPRITE.frames.idle;
+  const frameRate = moving ? 8.5 : 2.2;
+  const frame = frames[Math.floor(game.elapsed * frameRate) % frames.length];
+  const blink = player.invulnerable > 0 && Math.sin(game.elapsed * 38) > 0.2;
+  const speedRatio = clamp(Math.hypot(player.velocityX, player.velocityY) / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), 0, 1);
+  const bob = Math.sin(game.elapsed * (moving ? 10 : 3.2)) * (moving ? 2.6 : 1.2);
+  const lean = clamp(player.velocityX / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), -1, 1) * 0.13;
+  const breathe = 1 + Math.sin(game.elapsed * 3.2) * 0.018;
+  const visualHeight = 74 + speedRatio * 3;
+  const scale = visualHeight / frame.h;
+  const drawWidth = frame.w * scale;
+  const drawHeight = frame.h * scale * breathe;
+  const footY = player.radius * 1.08;
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
+  ctx.beginPath();
+  ctx.ellipse(0, player.radius * 0.9, player.radius * 1.38, player.radius * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(0, bob);
+  ctx.rotate(lean);
+  ctx.scale(player.facingSign, 1);
+  ctx.globalAlpha = blink ? 0.46 : 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    HERO_SPRITE.source,
+    frame.x,
+    frame.y,
+    frame.w,
+    frame.h,
+    -drawWidth * frame.anchorX,
+    footY - drawHeight * frame.anchorY,
+    drawWidth,
+    drawHeight,
+  );
+
+  const staffPulse = 0.72 + Math.sin(game.elapsed * 8) * 0.18;
+  ctx.globalAlpha = blink ? 0.34 : 1;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = `rgba(185, 251, 255, ${0.36 + staffPulse * 0.24})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(23, -24, 12 + staffPulse * 2, -0.5, Math.PI * 1.25);
+  ctx.stroke();
+  ctx.fillStyle = `rgba(255, 226, 122, ${0.5 + staffPulse * 0.28})`;
+  ctx.shadowColor = "#ffe27a";
+  ctx.shadowBlur = 16;
+  ctx.beginPath();
+  ctx.arc(26, -26, 4.2 + staffPulse * 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  return true;
+}
+
+function drawFallbackPlayerBody(player) {
   ctx.save();
   ctx.translate(player.x, player.y);
   ctx.rotate(player.facingAngle * 0.08);
@@ -1933,17 +2018,6 @@ function drawPlayer() {
   ctx.quadraticCurveTo(0, player.radius * 0.82, player.radius * 0.78, player.radius * 0.2);
   ctx.stroke();
   ctx.restore();
-
-  if (player.shield > 0 || shieldLevel > 0) {
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.strokeStyle = player.shield > 0 ? "rgba(85, 247, 255, 0.72)" : "rgba(85, 247, 255, 0.18)";
-    ctx.lineWidth = player.shield > 0 ? 3 : 1;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius + 12 + Math.sin(game.elapsed * 5) * 1.5, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
 }
 
 function drawEffects() {
@@ -2001,6 +2075,69 @@ function drawEffects() {
     ctx.textAlign = "center";
     ctx.fillText(text.text, text.x, text.y);
     ctx.restore();
+  }
+}
+
+function createHeroSprite() {
+  const image = new Image();
+  const sprite = {
+    image,
+    source: null,
+    loaded: false,
+    failed: false,
+    frames: {
+      idle: [
+        { x: 180, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+        { x: 275, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+      ],
+      move: [
+        { x: 180, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+        { x: 275, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+        { x: 275, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+        { x: 180, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
+      ],
+    },
+  };
+
+  image.onload = () => {
+    sprite.source = createChromaKeyedHeroSheet(image);
+    sprite.loaded = true;
+  };
+  image.onerror = () => {
+    sprite.failed = true;
+  };
+  image.src = "assets/hero.png";
+
+  return sprite;
+}
+
+function createChromaKeyedHeroSheet(image) {
+  const sheet = document.createElement("canvas");
+  sheet.width = image.naturalWidth || image.width;
+  sheet.height = image.naturalHeight || image.height;
+  const sheetCtx = sheet.getContext("2d");
+  sheetCtx.drawImage(image, 0, 0);
+
+  try {
+    const pixels = sheetCtx.getImageData(0, 0, sheet.width, sheet.height);
+    const data = pixels.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const red = data[i];
+      const green = data[i + 1];
+      const blue = data[i + 2];
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+
+      if (max < 14) {
+        data[i + 3] = 0;
+      } else if (max < 30 && max - min < 10) {
+        data[i + 3] = Math.round(((max - 14) / 16) * 190);
+      }
+    }
+    sheetCtx.putImageData(pixels, 0, 0);
+    return sheet;
+  } catch (error) {
+    return image;
   }
 }
 
