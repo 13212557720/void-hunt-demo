@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>虚空追猎</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="game-shell" aria-label="虚空追猎">
+      <canvas id="game-canvas"></canvas>
+
+      <section class="hud hud-top" aria-label="战斗状态">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span>虚空追猎</span>
+        </div>
+        <div class="meter-group">
+          <div class="meter-label">
+            <span>生命</span>
+            <span id="health-text">100 / 100</span>
+          </div>
+          <div class="meter">
+            <span id="health-fill" class="meter-fill health-fill"></span>
+          </div>
+        </div>
+        <div class="meter-group">
+          <div class="meter-label">
+            <span>经验</span>
+            <span id="xp-text">Lv.1</span>
+          </div>
+          <div class="meter">
+            <span id="xp-fill" class="meter-fill xp-fill"></span>
+          </div>
+        </div>
+        <div class="stat-pill">
+          <span>剩余</span>
+          <strong id="time-text">03:00</strong>
+        </div>
+        <div id="ultimate-pill" class="stat-pill ultimate-pill disabled">
+          <span>大招</span>
+          <strong id="ultimate-text">未充能</strong>
+        </div>
+      </section>
+
+      <section class="hud boss-hud" aria-label="Boss 状态">
+        <div class="boss-row">
+          <span>暗紫虚空术士</span>
+          <strong id="boss-phase-text">虚空术士正在逼近</strong>
+        </div>
+        <div class="meter boss-meter">
+          <span id="boss-fill" class="meter-fill boss-fill"></span>
+        </div>
+      </section>
+
+      <div id="stage-banner" class="stage-banner"></div>
+
+      <section id="start-panel" class="overlay" aria-label="开始">
+        <div class="result-box">
+          <p class="result-kicker">Boss 压迫流 Demo</p>
+          <h1>虚空追猎</h1>
+          <button id="start-button" type="button">开始战斗</button>
+        </div>
+      </section>
+
+      <section id="level-up-panel" class="overlay hidden" aria-label="升级选择">
+        <div class="level-up-box">
+          <h1 id="level-up-title">风暴力量觉醒</h1>
+          <div id="upgrade-options" class="upgrade-options"></div>
+        </div>
+      </section>
+
+      <section id="result-panel" class="overlay hidden" aria-label="结算">
+        <div class="result-box">
+          <p id="result-kicker" class="result-kicker">战斗结束</p>
+          <h1 id="result-title">风暴撕裂了虚空</h1>
+          <dl class="result-stats">
+            <div>
+              <dt>等级</dt>
+              <dd id="result-level">1</dd>
+            </div>
+            <div>
+              <dt>击杀</dt>
+              <dd id="result-kills">0</dd>
+            </div>
+            <div>
+              <dt>存活</dt>
+              <dd id="result-time">00:00</dd>
+            </div>
+          </dl>
+          <button id="restart-button" type="button">重新开始</button>
+        </div>
+      </section>
+    </main>
+
+    <script defer src="src/main.js"></script>
+  </body>
+</html>
