@@ -69,6 +69,7 @@ button {
 .meter-group,
 .stat-pill,
 .boss-hud,
+.character-box,
 .level-up-box,
 .result-box {
   border: 1px solid var(--line);
@@ -250,6 +251,7 @@ button {
 }
 
 .level-up-box,
+.character-box,
 .result-box {
   width: min(820px, 100%);
   border-radius: 8px;
@@ -257,11 +259,127 @@ button {
 }
 
 .level-up-box h1,
+.character-box h1,
 .result-box h1 {
   margin: 0;
   font-size: clamp(26px, 4vw, 42px);
   line-height: 1.05;
   letter-spacing: 0;
+}
+
+.character-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.character-card {
+  position: relative;
+  min-height: 228px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    filter 140ms ease;
+}
+
+.character-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.storm-card {
+  background:
+    linear-gradient(140deg, rgba(28, 213, 205, 0.18), rgba(105, 64, 180, 0.2)),
+    rgba(18, 14, 30, 0.98);
+}
+
+.storm-card::before {
+  background:
+    radial-gradient(circle at 78% 20%, rgba(255, 226, 122, 0.24), transparent 22%),
+    radial-gradient(circle at 18% 78%, rgba(53, 213, 200, 0.24), transparent 30%);
+}
+
+.windman-card {
+  background:
+    linear-gradient(140deg, rgba(74, 167, 255, 0.2), rgba(18, 28, 45, 0.92)),
+    rgba(16, 18, 26, 0.98);
+}
+
+.windman-card::before {
+  background:
+    radial-gradient(circle at 84% 20%, rgba(126, 235, 255, 0.26), transparent 26%),
+    radial-gradient(circle at 14% 82%, rgba(58, 117, 255, 0.2), transparent 34%);
+}
+
+.character-card:hover,
+.character-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(132, 238, 255, 0.72);
+  filter: brightness(1.08);
+  outline: none;
+}
+
+.character-card strong,
+.character-card small,
+.character-card p,
+.character-hotkey {
+  position: relative;
+  z-index: 1;
+}
+
+.character-card strong {
+  display: block;
+  margin-top: 38px;
+  font-size: 27px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.character-card small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-top: 10px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #dffcff;
+  font-size: 12px;
+}
+
+.character-card p {
+  max-width: 310px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.character-hotkey {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-weight: 850;
 }
 
 .upgrade-options {
@@ -405,12 +523,21 @@ button {
   }
 
   .upgrade-options,
+  .character-options,
   .result-stats {
     grid-template-columns: 1fr;
   }
 
   .upgrade-card {
     min-height: 132px;
+  }
+
+  .character-card {
+    min-height: 170px;
+  }
+
+  .character-card strong {
+    margin-top: 18px;
   }
 
   .boss-row {

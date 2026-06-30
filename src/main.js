@@ -14,6 +14,8 @@ const ui = {
   stageBanner: document.querySelector("#stage-banner"),
   startPanel: document.querySelector("#start-panel"),
   startButton: document.querySelector("#start-button"),
+  characterPanel: document.querySelector("#character-panel"),
+  characterCards: document.querySelectorAll(".character-card"),
   levelUpTitle: document.querySelector("#level-up-title"),
   levelUpPanel: document.querySelector("#level-up-panel"),
   upgradeOptions: document.querySelector("#upgrade-options"),
@@ -37,7 +39,41 @@ const MAX_RINGS = 64;
 const MAX_BOLTS = 80;
 const MAX_FLOATING_TEXTS = 90;
 
-const HERO_SPRITE = createHeroSprite();
+const SPRITE_SHEETS = createSpriteSheets();
+
+const CHARACTERS = {
+  storm: {
+    id: "storm",
+    name: "风暴之怒",
+    openingTitle: "选择开局风暴",
+    levelTitle: "风暴力量觉醒",
+    victoryReason: "风暴撕裂了虚空",
+    maxHp: 100,
+    speedMultiplier: 1,
+    initialSkills: {
+      lightning: 1,
+    },
+  },
+  windman: {
+    id: "windman",
+    name: "快乐风男",
+    openingTitle: "选择开局疾风",
+    levelTitle: "疾风剑意觉醒",
+    victoryReason: "疾风斩碎了虚空",
+    maxHp: 115,
+    speedMultiplier: 1.08,
+    initialSkills: {
+      dash: 1,
+      tornado: 1,
+    },
+  },
+};
+
+const COMMON_SKILL_IDS = ["frost", "wind", "orbs", "shield", "storm"];
+const CHARACTER_SKILL_IDS = {
+  storm: ["lightning"],
+  windman: ["dash", "tornado"],
+};
 
 const PHASES = {
   phase1: {
@@ -154,7 +190,20 @@ const SKILLS = {
   lightning: {
     name: "闪电链",
     type: "技能",
+    owner: "storm",
     desc: "自动打击附近目标，升级后伤害、弹射数量和冷却都会提升。",
+  },
+  dash: {
+    name: "踏前斩",
+    type: "技能",
+    owner: "windman",
+    desc: "靠近敌人后自动冲刺穿身，同一目标 4 秒内不会重复命中。",
+  },
+  tornado: {
+    name: "疾风龙卷",
+    type: "技能",
+    owner: "windman",
+    desc: "每 3 次踏前斩后，朝 Boss 方向释放一道穿透龙卷风。",
   },
   frost: {
     name: "冰霜环",
@@ -250,6 +299,7 @@ function createGame() {
     weakStarted: false,
     kills: 0,
     player: {
+      characterId: "storm",
       x: WORLD.width * 0.5,
       y: WORLD.height * 0.5,
       radius: 16,
@@ -268,19 +318,19 @@ function createGame() {
       velocityY: 0,
       facingAngle: 0,
       facingSign: 1,
+      dash: {
+        cooldown: 1,
+        hitCount: 0,
+        targetCooldowns: new Map(),
+        active: null,
+        slashTimer: 0,
+      },
       ultimate: {
         level: 0,
         charges: 0,
         castTimer: 0,
       },
-      skills: {
-        lightning: 1,
-        frost: 0,
-        wind: 0,
-        orbs: 0,
-        shield: 0,
-        storm: 0,
-      },
+      skills: createSkillLevels(CHARACTERS.storm.initialSkills),
       cooldowns: {
         lightning: 0.45,
         frost: 3.2,
@@ -324,14 +374,57 @@ function resetGame() {
   game = createGame();
   ui.resultPanel.classList.add("hidden");
   ui.levelUpPanel.classList.add("hidden");
+  ui.characterPanel.classList.add("hidden");
   ui.startPanel.classList.add("hidden");
   startGame();
 }
 
 function startGame() {
   if (game.state !== "ready") return;
+  game.state = "characterSelect";
   ui.startPanel.classList.add("hidden");
+  ui.characterPanel.classList.remove("hidden");
+}
+
+function selectCharacter(characterId) {
+  const character = CHARACTERS[characterId];
+  if (!character || game.state !== "characterSelect") return;
+
+  const player = game.player;
+  player.characterId = character.id;
+  player.maxHp = character.maxHp;
+  player.hp = character.maxHp;
+  player.speedMultiplier = character.speedMultiplier;
+  player.skills = createSkillLevels(character.initialSkills);
+  player.cooldowns = {
+    lightning: 0.45,
+    frost: 3.2,
+    wind: 1.6,
+  };
+  player.dash = {
+    cooldown: 0.45,
+    hitCount: 0,
+    targetCooldowns: new Map(),
+    active: null,
+    slashTimer: 0,
+  };
+  player.shield = 0;
+  player.shieldTimer = 0;
+
+  ui.characterPanel.classList.add("hidden");
   openLevelUp("opening");
+}
+
+function createSkillLevels(initialSkills = {}) {
+  const skills = {};
+  for (const id of Object.keys(SKILLS)) {
+    skills[id] = initialSkills[id] || 0;
+  }
+  return skills;
+}
+
+function getCharacter() {
+  return CHARACTERS[game.player.characterId] || CHARACTERS.storm;
 }
 
 function resizeCanvas() {
@@ -362,6 +455,11 @@ window.addEventListener("keydown", (event) => {
     }
   }
 
+  if (game.state === "characterSelect") {
+    if (key === "1") selectCharacter("storm");
+    if (key === "2") selectCharacter("windman");
+  }
+
   if (game.state === "playing" && key === "r") {
     castUltimate();
   }
@@ -373,6 +471,9 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
 ui.restartButton.addEventListener("click", resetGame);
 ui.startButton.addEventListener("click", startGame);
+ui.characterCards.forEach((card) => {
+  card.addEventListener("click", () => selectCharacter(card.dataset.character));
+});
 
 resizeCanvas();
 requestAnimationFrame(frame);
@@ -399,6 +500,7 @@ function updateGame(dt) {
   game.bannerTimer = Math.max(0, game.bannerTimer - dt);
   game.shake = Math.max(0, game.shake - dt * 18);
   game.player.ultimate.castTimer = Math.max(0, game.player.ultimate.castTimer - dt);
+  game.player.dash.slashTimer = Math.max(0, game.player.dash.slashTimer - dt);
 
   updatePhase();
   updatePlayer(dt);
@@ -445,6 +547,14 @@ function updatePhase() {
 
 function updatePlayer(dt) {
   const player = game.player;
+
+  if (player.dash.active) {
+    updateActiveDash(dt);
+    player.invulnerable = Math.max(0, player.invulnerable - dt);
+    updatePlayerShield(dt);
+    return;
+  }
+
   let dx = 0;
   let dy = 0;
 
@@ -471,7 +581,11 @@ function updatePlayer(dt) {
   player.x = clamp(player.x + player.velocityX * dt, player.radius, WORLD.width - player.radius);
   player.y = clamp(player.y + player.velocityY * dt, player.radius, WORLD.height - player.radius);
   player.invulnerable = Math.max(0, player.invulnerable - dt);
+  updatePlayerShield(dt);
+}
 
+function updatePlayerShield(dt) {
+  const player = game.player;
   const shieldLevel = player.skills.shield;
   if (shieldLevel > 0) {
     if (player.shield <= 0) {
@@ -484,6 +598,30 @@ function updatePlayer(dt) {
     } else {
       player.shieldTimer = Math.min(player.shieldTimer, getShieldCooldown(shieldLevel));
     }
+  }
+}
+
+function updateActiveDash(dt) {
+  const player = game.player;
+  const dash = player.dash.active;
+  if (!dash) return;
+
+  dash.life -= dt;
+  const progress = 1 - clamp(dash.life / dash.maxLife, 0, 1);
+  const eased = 1 - Math.pow(1 - progress, 3);
+  player.x = lerp(dash.startX, dash.endX, eased);
+  player.y = lerp(dash.startY, dash.endY, eased);
+  player.velocityX = Math.cos(dash.angle) * 760;
+  player.velocityY = Math.sin(dash.angle) * 760;
+  player.facingAngle = dash.angle;
+  player.facingSign = Math.cos(dash.angle) < 0 ? -1 : 1;
+
+  if (dash.life <= 0) {
+    player.x = dash.endX;
+    player.y = dash.endY;
+    player.velocityX = 0;
+    player.velocityY = 0;
+    player.dash.active = null;
   }
 }
 
@@ -654,8 +792,14 @@ function updateSkills(dt) {
     player.cooldowns[key] = Math.max(0, player.cooldowns[key] - dt);
   }
 
-  if (player.cooldowns.lightning <= 0) {
+  updateDashCooldowns(dt);
+
+  if (player.skills.lightning > 0 && player.cooldowns.lightning <= 0) {
     castLightning();
+  }
+
+  if (player.skills.dash > 0) {
+    tryCastSweepingDash();
   }
 
   if (player.skills.frost > 0 && player.cooldowns.frost <= 0) {
@@ -694,10 +838,12 @@ function updatePlayerProjectiles(dt) {
       if (enemy.dead || projectile.hitIds.has(enemy.id)) continue;
       if (distanceBetween(projectile, enemy) < projectile.radius + enemy.radius) {
         projectile.hitIds.add(enemy.id);
-        damageEnemy(enemy, projectile.damage, "wind");
-        projectile.pierce -= 1;
-        burst(enemy.x, enemy.y, 7, "#9ffff4", 110, 0.3);
-        if (projectile.pierce <= 0) {
+        damageEnemy(enemy, projectile.damage, projectile.kind || "wind");
+        burst(enemy.x, enemy.y, projectile.kind === "tornado" ? 12 : 7, "#9ffff4", projectile.kind === "tornado" ? 170 : 110, 0.3);
+        if (projectile.kind !== "tornado") {
+          projectile.pierce -= 1;
+        }
+        if (projectile.pierce <= 0 && projectile.kind !== "tornado") {
           projectile.remove = true;
           break;
         }
@@ -706,10 +852,12 @@ function updatePlayerProjectiles(dt) {
 
     if (!projectile.remove && !projectile.hitBoss && distanceBetween(projectile, boss) < projectile.radius + boss.radius) {
       projectile.hitBoss = true;
-      damageBoss(projectile.damage * 1.25, "wind");
-      projectile.pierce -= 2;
-      createBolt(projectile.x, projectile.y, boss.x, boss.y, "#9ffff4", 0.1);
-      if (projectile.pierce <= 0) {
+      damageBoss(projectile.kind === "tornado" ? projectile.bossDamage : projectile.damage * 1.25, projectile.kind || "wind");
+      createBolt(projectile.x, projectile.y, boss.x, boss.y, "#9ffff4", projectile.kind === "tornado" ? 0.16 : 0.1);
+      if (projectile.kind !== "tornado") {
+        projectile.pierce -= 2;
+      }
+      if (projectile.pierce <= 0 && projectile.kind !== "tornado") {
         projectile.remove = true;
       }
     }
@@ -854,6 +1002,7 @@ function castWindBlades() {
       y: player.y + Math.sin(angle) * 28,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
+      kind: "wind",
       radius: 15,
       damage: 23 + level * 8,
       pierce: 4 + level,
@@ -865,6 +1014,135 @@ function castWindBlades() {
   }
 
   player.cooldowns.wind = Math.max(0.8, (1.85 - level * 0.09) * player.cooldownMultiplier);
+}
+
+function updateDashCooldowns(dt) {
+  const dash = game.player.dash;
+  dash.cooldown = Math.max(0, dash.cooldown - dt);
+
+  for (const [key, cooldown] of dash.targetCooldowns.entries()) {
+    const nextCooldown = cooldown - dt;
+    if (nextCooldown <= 0) {
+      dash.targetCooldowns.delete(key);
+    } else {
+      dash.targetCooldowns.set(key, nextCooldown);
+    }
+  }
+}
+
+function tryCastSweepingDash() {
+  const player = game.player;
+  const dashLevel = player.skills.dash;
+  const dashState = player.dash;
+  if (dashLevel <= 0 || dashState.cooldown > 0 || dashState.active) return;
+
+  const target = findSweepingDashTarget();
+  if (!target) return;
+
+  const angle = Math.atan2(target.y - player.y, target.x - player.x);
+  const exitDistance = target.radius + player.radius + 34;
+  const endX = clamp(target.x + Math.cos(angle) * exitDistance, player.radius, WORLD.width - player.radius);
+  const endY = clamp(target.y + Math.sin(angle) * exitDistance, player.radius, WORLD.height - player.radius);
+  const targetKey = target.kind === "boss" ? "boss" : target.enemy.id;
+  const enemyDamage = 48 + (dashLevel - 1) * 16;
+  const bossDamage = 58 + (dashLevel - 1) * 18;
+
+  dashState.cooldown = 1;
+  dashState.targetCooldowns.set(targetKey, 4);
+  dashState.active = {
+    startX: player.x,
+    startY: player.y,
+    endX,
+    endY,
+    angle,
+    maxLife: 0.16,
+    life: 0.16,
+  };
+  dashState.slashTimer = 0.28;
+  dashState.hitCount += 1;
+  player.invulnerable = Math.max(player.invulnerable, 0.24);
+  player.facingAngle = angle;
+  player.facingSign = Math.cos(angle) < 0 ? -1 : 1;
+
+  createRing(target.x, target.y, 68, "#7eebff", 0.22, 3);
+  createBolt(player.x, player.y, target.x, target.y, "#7eebff", 0.1);
+  burst(target.x, target.y, 12, "#7eebff", 180, 0.32);
+
+  if (target.kind === "boss") {
+    damageBoss(bossDamage, "dash");
+  } else {
+    damageEnemy(target.enemy, enemyDamage, "dash");
+  }
+
+  if (dashState.hitCount >= 3) {
+    dashState.hitCount = 0;
+    castGaleTornado();
+  }
+}
+
+function findSweepingDashTarget() {
+  const player = game.player;
+  const range = 145 + player.skills.dash * 8;
+  let best = null;
+  let bestDistance = Infinity;
+
+  for (const enemy of game.enemies) {
+    if (enemy.dead || player.dash.targetCooldowns.has(enemy.id)) continue;
+    const distance = distanceBetween(player, enemy);
+    if (distance <= range + enemy.radius && distance < bestDistance) {
+      best = {
+        kind: "enemy",
+        enemy,
+        x: enemy.x,
+        y: enemy.y,
+        radius: enemy.radius,
+      };
+      bestDistance = distance;
+    }
+  }
+
+  const bossDistance = distanceBetween(player, game.boss);
+  if (!player.dash.targetCooldowns.has("boss") && bossDistance <= range + game.boss.radius && bossDistance < bestDistance) {
+    best = {
+      kind: "boss",
+      x: game.boss.x,
+      y: game.boss.y,
+      radius: game.boss.radius,
+    };
+  }
+
+  return best;
+}
+
+function castGaleTornado() {
+  const player = game.player;
+  const dashLevel = player.skills.dash;
+  const tornadoLevel = player.skills.tornado;
+  const angle = Math.atan2(game.boss.y - player.y, game.boss.x - player.x);
+  const speed = 560;
+  const damage = 70 + tornadoLevel * 18 + dashLevel * 8;
+  const bossDamage = 95 + tornadoLevel * 26 + dashLevel * 8;
+
+  game.playerProjectiles.push({
+    kind: "tornado",
+    x: player.x + Math.cos(angle) * 34,
+    y: player.y + Math.sin(angle) * 34,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    angle,
+    radius: 34 + tornadoLevel * 2,
+    damage,
+    bossDamage,
+    pierce: Infinity,
+    life: 1.8,
+    spin: randomRange(0, Math.PI * 2),
+    hitIds: new Set(),
+    hitBoss: false,
+  });
+
+  game.shake = Math.max(game.shake, 0.75);
+  createRing(player.x, player.y, 120, "#7eebff", 0.32, 4);
+  addFloatingText(player.x, player.y - 44, "疾风龙卷", "#9ffff4");
 }
 
 function castUltimate() {
@@ -1170,7 +1448,7 @@ function damageBoss(amount, source) {
 
   if (boss.hp <= 0 && game.phase === "weak") {
     boss.hp = 0;
-    finishGame("victory", "风暴撕裂了虚空");
+    finishGame("victory", getCharacter().victoryReason);
   }
 }
 
@@ -1228,7 +1506,8 @@ function tryLevelUp() {
 function openLevelUp(mode = "level") {
   game.upgradeMode = mode;
   game.state = "levelUpPaused";
-  ui.levelUpTitle.textContent = mode === "opening" ? "选择开局风暴" : "风暴力量觉醒";
+  const character = getCharacter();
+  ui.levelUpTitle.textContent = mode === "opening" ? character.openingTitle : character.levelTitle;
   game.upgrades = pickUpgradeOptions(mode);
   ui.upgradeOptions.innerHTML = "";
 
@@ -1250,42 +1529,52 @@ function openLevelUp(mode = "level") {
 
 function pickUpgradeOptions(mode = "level") {
   const player = game.player;
-  const pool = [];
+  const characterSkillIds = CHARACTER_SKILL_IDS[player.characterId] || CHARACTER_SKILL_IDS.storm;
+  const allowedSkillIds = [...characterSkillIds, ...COMMON_SKILL_IDS];
+  const skillUpgrades = allowedSkillIds.map((id) => createSkillUpgrade(id)).filter(Boolean);
 
-  for (const [id, meta] of Object.entries(SKILLS)) {
-    if (player.skills[id] >= 8) continue;
-    const currentLevel = player.skills[id];
+  if (mode === "opening") {
+    const required = characterSkillIds.map((id) => createSkillUpgrade(id)).filter(Boolean);
+    const common = COMMON_SKILL_IDS.map((id) => createSkillUpgrade(id)).filter(Boolean);
+    shuffle(common);
+    return [...required, ...common].slice(0, 3);
+  }
+
+  const pool = [...skillUpgrades];
+  if (player.ultimate.level < 6) {
     pool.push({
-      id,
-      kind: "skill",
-      type: meta.type,
-      name: currentLevel > 0 ? `${meta.name} +1` : `解锁 ${meta.name}`,
-      desc: meta.desc,
-      apply(target) {
-        target.skills[id] += 1;
-        if (id === "shield") {
-          target.shield = 1;
-          target.shieldTimer = getShieldCooldown(target.skills.shield);
-        }
-      },
+      ...ULTIMATE_UPGRADE,
+      name: player.ultimate.level > 0 ? `${ULTIMATE_UPGRADE.name} +1` : `解锁 ${ULTIMATE_UPGRADE.name}`,
     });
   }
 
-  if (mode !== "opening") {
-    if (player.ultimate.level < 6) {
-      pool.push({
-        ...ULTIMATE_UPGRADE,
-        name: player.ultimate.level > 0 ? `${ULTIMATE_UPGRADE.name} +1` : `解锁 ${ULTIMATE_UPGRADE.name}`,
-      });
-    }
-
-    for (const upgrade of STAT_UPGRADES) {
-      pool.push({ ...upgrade, kind: "stat" });
-    }
+  for (const upgrade of STAT_UPGRADES) {
+    pool.push({ ...upgrade, kind: "stat" });
   }
 
   shuffle(pool);
   return pool.slice(0, 3);
+}
+
+function createSkillUpgrade(id) {
+  const player = game.player;
+  const meta = SKILLS[id];
+  if (!meta || player.skills[id] >= 8) return null;
+  const currentLevel = player.skills[id];
+  return {
+    id,
+    kind: "skill",
+    type: meta.type,
+    name: currentLevel > 0 ? `${meta.name} +1` : `解锁 ${meta.name}`,
+    desc: meta.desc,
+    apply(target) {
+      target.skills[id] += 1;
+      if (id === "shield") {
+        target.shield = 1;
+        target.shieldTimer = getShieldCooldown(target.skills.shield);
+      }
+    },
+  };
 }
 
 function chooseUpgrade(index) {
@@ -1575,6 +1864,11 @@ function drawProjectiles() {
 
   for (const projectile of game.playerProjectiles) {
     if (!isVisible(projectile.x, projectile.y, projectile.radius + RENDER_MARGIN)) continue;
+    if (projectile.kind === "tornado") {
+      drawTornadoProjectile(projectile);
+      continue;
+    }
+
     ctx.save();
     ctx.translate(projectile.x, projectile.y);
     ctx.rotate(projectile.spin);
@@ -1587,6 +1881,34 @@ function drawProjectiles() {
     ctx.fill();
     ctx.restore();
   }
+}
+
+function drawTornadoProjectile(projectile) {
+  const sheet = SPRITE_SHEETS.windman;
+  const frame = sheet.frames.tornado[Math.floor(game.elapsed * 10) % sheet.frames.tornado.length];
+  ctx.save();
+  ctx.translate(projectile.x, projectile.y);
+  ctx.rotate(projectile.angle || Math.atan2(projectile.vy, projectile.vx));
+  ctx.globalCompositeOperation = "lighter";
+
+  if (sheet.loaded && sheet.source) {
+    const height = 92;
+    const width = (frame.w / frame.h) * height;
+    ctx.globalAlpha = 0.86;
+    ctx.drawImage(sheet.source, frame.x, frame.y, frame.w, frame.h, -width * 0.5, -height * 0.5, width, height);
+  } else {
+    ctx.strokeStyle = "rgba(126, 235, 255, 0.88)";
+    ctx.lineWidth = 5;
+    ctx.shadowColor = "#7eebff";
+    ctx.shadowBlur = 18;
+    for (let i = 0; i < 3; i += 1) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 42 - i * 8, 12 + i * 5, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
 }
 
 function drawEnemies() {
@@ -1885,7 +2207,7 @@ function drawPlayer() {
     }
   }
 
-  if (!drawHeroSprite(player)) {
+  if (!drawCharacterSprite(player)) {
     drawFallbackPlayerBody(player);
   }
 
@@ -1901,11 +2223,19 @@ function drawPlayer() {
   }
 }
 
-function drawHeroSprite(player) {
-  if (!HERO_SPRITE.loaded || !HERO_SPRITE.source) return false;
+function drawCharacterSprite(player) {
+  if (player.characterId === "windman") {
+    return drawWindmanSprite(player);
+  }
+  return drawStormSprite(player);
+}
+
+function drawStormSprite(player) {
+  const sprite = SPRITE_SHEETS.storm;
+  if (!sprite.loaded || !sprite.source) return false;
 
   const moving = Math.hypot(player.velocityX, player.velocityY) > 12;
-  const frames = moving ? HERO_SPRITE.frames.move : HERO_SPRITE.frames.idle;
+  const frames = moving ? sprite.frames.move : sprite.frames.idle;
   const frameRate = moving ? 8.5 : 2.2;
   const frame = frames[Math.floor(game.elapsed * frameRate) % frames.length];
   const blink = player.invulnerable > 0 && Math.sin(game.elapsed * 38) > 0.2;
@@ -1933,7 +2263,7 @@ function drawHeroSprite(player) {
   ctx.globalAlpha = blink ? 0.46 : 1;
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(
-    HERO_SPRITE.source,
+    sprite.source,
     frame.x,
     frame.y,
     frame.w,
@@ -1958,6 +2288,83 @@ function drawHeroSprite(player) {
   ctx.beginPath();
   ctx.arc(26, -26, 4.2 + staffPulse * 1.8, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+
+  return true;
+}
+
+function drawWindmanSprite(player) {
+  const sprite = SPRITE_SHEETS.windman;
+  if (!sprite.loaded || !sprite.source) return false;
+
+  const moving = Math.hypot(player.velocityX, player.velocityY) > 12;
+  const dashing = Boolean(player.dash.active) || player.dash.slashTimer > 0;
+  const frames = dashing ? sprite.frames.slash : moving ? sprite.frames.move : sprite.frames.idle;
+  const frameRate = dashing ? 16 : moving ? 8.5 : 2.4;
+  const frame = frames[Math.floor(game.elapsed * frameRate) % frames.length];
+  const blink = player.invulnerable > 0 && Math.sin(game.elapsed * 38) > 0.2 && !dashing;
+  const speedRatio = clamp(Math.hypot(player.velocityX, player.velocityY) / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), 0, 1);
+  const bob = Math.sin(game.elapsed * (moving ? 10 : 3.2)) * (moving ? 2.2 : 1.1);
+  const lean = clamp(player.velocityX / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), -1, 1) * 0.16;
+  const visualWidth = dashing ? 96 : 82;
+  const scale = visualWidth / frame.w;
+  const drawWidth = frame.w * scale;
+  const drawHeight = frame.h * scale;
+  const footY = player.radius * 1.24;
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
+  ctx.beginPath();
+  ctx.ellipse(0, player.radius * 0.96, player.radius * 1.45, player.radius * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (dashing) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = "rgba(126, 235, 255, 0.58)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-player.facingSign * 42, -18);
+    ctx.quadraticCurveTo(-player.facingSign * 6, -3, player.facingSign * 42, 16);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (let i = dashing ? 2 : 0; i > 0; i -= 1) {
+    ctx.save();
+    ctx.translate(-Math.cos(player.facingAngle) * i * 16, -Math.sin(player.facingAngle) * i * 16);
+    ctx.globalAlpha = 0.18 * i;
+    ctx.scale(player.facingSign, 1);
+    ctx.drawImage(sprite.source, frame.x, frame.y, frame.w, frame.h, -drawWidth * frame.anchorX, footY - drawHeight * frame.anchorY, drawWidth, drawHeight);
+    ctx.restore();
+  }
+
+  ctx.translate(0, bob);
+  ctx.rotate(lean);
+  ctx.scale(player.facingSign, 1);
+  ctx.globalAlpha = blink ? 0.46 : 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    sprite.source,
+    frame.x,
+    frame.y,
+    frame.w,
+    frame.h,
+    -drawWidth * frame.anchorX,
+    footY - drawHeight * frame.anchorY,
+    drawWidth,
+    drawHeight,
+  );
+
+  const pulse = 0.65 + Math.sin(game.elapsed * 9) * 0.2;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = `rgba(126, 235, 255, ${0.34 + pulse * 0.3})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(14, -10, 22 + pulse * 3, -0.5, Math.PI * 0.9);
+  ctx.stroke();
   ctx.restore();
 
   return true;
@@ -2078,14 +2485,9 @@ function drawEffects() {
   }
 }
 
-function createHeroSprite() {
-  const image = new Image();
-  const sprite = {
-    image,
-    source: null,
-    loaded: false,
-    failed: false,
-    frames: {
+function createSpriteSheets() {
+  return {
+    storm: createSpriteSheet("assets/hero.png", true, {
       idle: [
         { x: 180, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
         { x: 275, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
@@ -2096,17 +2498,46 @@ function createHeroSprite() {
         { x: 275, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
         { x: 180, y: 145, w: 75, h: 141, anchorX: 0.5, anchorY: 0.88 },
       ],
-    },
+    }),
+    windman: createSpriteSheet("assets/windman.png", false, {
+      idle: [
+        { x: 176, y: 512, w: 508, h: 440, anchorX: 0.5, anchorY: 0.84 },
+        { x: 608, y: 584, w: 360, h: 356, anchorX: 0.5, anchorY: 0.85 },
+      ],
+      move: [
+        { x: 176, y: 512, w: 508, h: 440, anchorX: 0.5, anchorY: 0.84 },
+        { x: 608, y: 584, w: 360, h: 356, anchorX: 0.5, anchorY: 0.85 },
+      ],
+      slash: [
+        { x: 608, y: 584, w: 360, h: 356, anchorX: 0.5, anchorY: 0.85 },
+        { x: 176, y: 512, w: 508, h: 440, anchorX: 0.5, anchorY: 0.84 },
+      ],
+      tornado: [
+        { x: 1040, y: 156, w: 460, h: 416 },
+        { x: 1168, y: 572, w: 340, h: 380 },
+      ],
+    }),
+  };
+}
+
+function createSpriteSheet(src, chromaKey, frames) {
+  const image = new Image();
+  const sprite = {
+    image,
+    source: null,
+    loaded: false,
+    failed: false,
+    frames,
   };
 
   image.onload = () => {
-    sprite.source = createChromaKeyedHeroSheet(image);
+    sprite.source = chromaKey ? createChromaKeyedHeroSheet(image) : image;
     sprite.loaded = true;
   };
   image.onerror = () => {
     sprite.failed = true;
   };
-  image.src = "assets/hero.png";
+  image.src = src;
 
   return sprite;
 }
