@@ -1,7 +1,5 @@
 import { clamp } from "./utils.js";
 
-const JOYSTICK_RADIUS = 54;
-
 export function createInputController(ui, actions) {
   const keys = new Set();
   const input = {
@@ -116,16 +114,17 @@ export function createInputController(ui, actions) {
 
 function updateJoystick(input, ui, event) {
   const rect = ui.moveJoystick.getBoundingClientRect();
+  const radius = Math.min(rect.width, rect.height) * 0.43;
   const centerX = rect.left + rect.width * 0.5;
   const centerY = rect.top + rect.height * 0.5;
   const rawX = event.clientX - centerX;
   const rawY = event.clientY - centerY;
   const length = Math.hypot(rawX, rawY);
-  const limited = length > JOYSTICK_RADIUS ? JOYSTICK_RADIUS / length : 1;
+  const limited = length > radius ? radius / length : 1;
   const x = rawX * limited;
   const y = rawY * limited;
 
-  input.joystickX = clamp(x / JOYSTICK_RADIUS, -1, 1);
-  input.joystickY = clamp(y / JOYSTICK_RADIUS, -1, 1);
+  input.joystickX = clamp(x / radius, -1, 1);
+  input.joystickY = clamp(y / radius, -1, 1);
   ui.joystickKnob.style.transform = `translate3d(calc(-50% + ${x}px), calc(-50% + ${y}px), 0)`;
 }
