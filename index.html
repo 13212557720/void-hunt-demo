@@ -57,6 +57,18 @@
       <div id="stage-banner" class="stage-banner"></div>
 
       <section id="start-panel" class="overlay" aria-label="开始">
+        <video
+          id="start-video"
+          class="start-video"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          aria-hidden="true"
+        >
+          <source src="assets/storm.mp4" type="video/mp4" />
+        </video>
         <div class="result-box">
           <p class="result-kicker">Boss 压迫流 Demo</p>
           <h1>虚空追猎</h1>
@@ -113,8 +125,19 @@
           <button id="restart-button" type="button">重新开始</button>
         </div>
       </section>
+
+      <section id="mobile-controls" class="mobile-controls" aria-label="手机操作">
+        <div id="move-joystick" class="move-joystick" aria-label="移动摇杆" role="application">
+          <span id="joystick-knob" class="joystick-knob"></span>
+        </div>
+        <button id="ultimate-touch-button" class="ultimate-touch-button" type="button" aria-label="释放大招">
+          <span>R</span>
+          <strong>x0</strong>
+        </button>
+      </section>
+      <div id="orientation-hint" class="orientation-hint" aria-hidden="true">请横屏游玩</div>
     </main>
 
-    <script defer src="src/main.js?v=20260630-lifesteal"></script>
+    <script type="module" src="src/main.js?v=20260630-mobile-perf"></script>
   </body>
 </html>
