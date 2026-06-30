@@ -1,4 +1,4 @@
-import { CHARACTERS, SKILLS, WORLD } from "./config.js";
+import { BOSS_MAX_HP, CHARACTERS, SKILLS, WORLD } from "./config.js";
 import { mulberry32 } from "./utils.js";
 
 export function createGameState() {
@@ -42,6 +42,7 @@ export function createGameState() {
         level: 0,
         charges: 0,
         castTimer: 0,
+        castLevel: 0,
       },
       skills: createSkillLevels(CHARACTERS.storm.initialSkills),
       cooldowns: {
@@ -54,8 +55,8 @@ export function createGameState() {
       x: WORLD.width * 0.5 + 420,
       y: WORLD.height * 0.5 - 180,
       radius: 38,
-      hp: 3000,
-      maxHp: 3000,
+      hp: BOSS_MAX_HP,
+      maxHp: BOSS_MAX_HP,
       contactCooldown: 0,
       orbTimer: 1.6,
       hazardTimer: 5.2,
@@ -72,6 +73,7 @@ export function createGameState() {
       bottom: window.innerHeight,
     },
     enemies: [],
+    chests: [],
     expOrbs: [],
     hostileProjectiles: [],
     playerProjectiles: [],
@@ -82,6 +84,7 @@ export function createGameState() {
     floatingTexts: [],
     decorations: createDecorations(),
     spawnTimer: 0.2,
+    chestSpawnTimer: 24,
     upgrades: [],
     upgradeMode: "level",
     shake: 0,

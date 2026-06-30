@@ -1,11 +1,12 @@
 import {
+  CHEST_HITS_REQUIRED,
   CHARACTER_SKILL_IDS,
   CHARACTERS,
   COMMON_SKILL_IDS,
   ENEMY_QUERY_PADDING,
   ENEMY_SPATIAL_CELL_SIZE,
   ENEMY_TYPES,
-  GAME_DURATION,
+  MAX_CHESTS,
   MAX_BOLTS,
   MAX_ENEMIES,
   MAX_FLOATING_TEXTS,
@@ -21,7 +22,7 @@ import {
   WORLD,
 } from "./config.js";
 import { createSpatialIndex } from "./performance.js";
-import { createGameState, createSkillLevels } from "./state.js?v=20260630-boss";
+import { createGameState, createSkillLevels } from "./state.js?v=20260630-chests";
 import { hideStartVideo, updateTouchUltimateButton } from "./ui.js";
 import { clamp, colorWithAlpha, distanceBetween, formatTime, lerp, randomLike, randomRange, shuffle } from "./utils.js";
 
@@ -31,9 +32,11 @@ const enemyIndex = createSpatialIndex(ENEMY_SPATIAL_CELL_SIZE);
 let enemyIndexReady = false;
 let game = createGameState();
 let enemyId = 1;
+let chestId = 1;
 
 function resetGame() {
   enemyId = 1;
+  chestId = 1;
   enemyIndexReady = false;
   game = createGameState();
   ui.resultPanel.classList.add("hidden");
@@ -124,6 +127,7 @@ function updateGame(dt) {
   updatePlayer(dt);
   updateBoss(dt);
   updateEnemySpawner(dt);
+  updateChests(dt);
   updateEnemies(dt);
   rebuildEnemyIndex();
   updateHostileProjectiles(dt);
@@ -133,10 +137,6 @@ function updateGame(dt) {
   updateExpOrbs(dt);
   updateEffects(dt);
   updateCamera();
-
-  if (game.elapsed >= GAME_DURATION && game.state === "playing") {
-    finishGame("defeat", "虚空术士恢复了力量");
-  }
 }
 
 function updatePhase() {
@@ -156,7 +156,7 @@ function updatePhase() {
 
     if (nextPhase === "weak" && !game.weakStarted) {
       game.weakStarted = true;
-      game.boss.hp = Math.min(game.boss.hp, 1450);
+      game.boss.hp = Math.min(game.boss.hp, 290);
       game.boss.weakPulse = 3;
       createRing(game.boss.x, game.boss.y, 260, "#ffd36b", 1.1, 7);
       burst(game.boss.x, game.boss.y, 52, "#ffd36b", 360, 1.1);
@@ -258,7 +258,7 @@ function updateBoss(dt) {
   boss.castTimer = Math.max(0, boss.castTimer - dt);
 
   if (distance < boss.radius + player.radius + 2 && boss.contactCooldown <= 0) {
-    damagePlayer(game.phase === "weak" ? 12 : 24);
+    damagePlayer(game.phase === "weak" ? 24 : 48);
     boss.contactCooldown = game.phase === "weak" ? 1.4 : 0.85;
   }
 
@@ -294,6 +294,138 @@ function updateEnemySpawner(dt) {
   }
 
   game.spawnTimer = phase.spawnCooldown * randomRange(0.72, 1.18);
+}
+
+function updateChests(dt) {
+  for (const chest of game.chests) {
+    chest.flash = Math.max(0, chest.flash - dt);
+    chest.pulse += dt;
+
+    for (const [key, cooldown] of chest.hitCooldowns.entries()) {
+      const nextCooldown = cooldown - dt;
+      if (nextCooldown <= 0) {
+        chest.hitCooldowns.delete(key);
+      } else {
+        chest.hitCooldowns.set(key, nextCooldown);
+      }
+    }
+  }
+
+  game.chests = game.chests.filter((chest) => !chest.remove);
+  game.chestSpawnTimer -= dt;
+  if (game.chestSpawnTimer > 0) return;
+
+  if (game.chests.length < MAX_CHESTS) {
+    spawnChest(getChestSpawnPoint());
+  }
+  game.chestSpawnTimer = randomRange(22, 30);
+}
+
+function seedOpeningChests() {
+  if (game.chests.length > 0) return;
+  for (let i = 0; i < 3 && game.chests.length < MAX_CHESTS; i += 1) {
+    spawnChest(getChestSpawnPoint());
+  }
+  game.chestSpawnTimer = randomRange(22, 30);
+}
+
+function spawnChest(point) {
+  game.chests.push({
+    id: chestId,
+    x: point.x,
+    y: point.y,
+    radius: 24,
+    hits: 0,
+    hitsRequired: CHEST_HITS_REQUIRED,
+    hitCooldowns: new Map(),
+    flash: 0,
+    pulse: randomRange(0, Math.PI * 2),
+    remove: false,
+  });
+  chestId += 1;
+}
+
+function getChestSpawnPoint() {
+  const player = game.player;
+  let fallback = null;
+
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const angle = randomRange(0, Math.PI * 2);
+    const distance = randomRange(650, 1150);
+    const point = {
+      x: clamp(player.x + Math.cos(angle) * distance, 80, WORLD.width - 80),
+      y: clamp(player.y + Math.sin(angle) * distance, 80, WORLD.height - 80),
+    };
+    fallback = fallback || point;
+
+    const clearOfBoss = distanceBetween(point, game.boss) > 240;
+    const clearOfChests = game.chests.every((chest) => distanceBetween(point, chest) > 180);
+    if (clearOfBoss && clearOfChests) return point;
+  }
+
+  return fallback || { x: player.x, y: player.y };
+}
+
+function hitChest(chest, source, cooldown = 0) {
+  if (game.state !== "playing" || chest.remove) return false;
+  if (cooldown > 0 && chest.hitCooldowns.get(source) > 0) return false;
+
+  if (cooldown > 0) {
+    chest.hitCooldowns.set(source, cooldown);
+  }
+
+  chest.hits += 1;
+  chest.flash = 0.24;
+  createRing(chest.x, chest.y, 46 + chest.hits * 9, "#ffd36b", 0.22, 3);
+  burst(chest.x, chest.y, 8, "#ffd36b", 110, 0.3);
+  addFloatingText(chest.x, chest.y - 32, `${chest.hits}/${chest.hitsRequired}`, "#ffd36b");
+
+  if (chest.hits >= chest.hitsRequired) {
+    openChest(chest);
+  }
+
+  return true;
+}
+
+function damageChestsInRadius(x, y, radius, source, cooldown = 0) {
+  for (const chest of game.chests) {
+    if (!chest.remove && distanceBetween({ x, y }, chest) < radius + chest.radius) {
+      hitChest(chest, source, cooldown);
+    }
+  }
+}
+
+function openChest(chest) {
+  if (chest.remove) return;
+  chest.remove = true;
+  createRing(chest.x, chest.y, 138, "#ffd36b", 0.45, 5);
+  burst(chest.x, chest.y, 34, "#ffd36b", 260, 0.62);
+
+  const roll = Math.random();
+  if (roll < 1 / 3) {
+    addFloatingText(chest.x, chest.y - 44, "宝箱馈赠", "#ffd36b");
+    openLevelUp("chest");
+  } else if (roll < 2 / 3) {
+    addFloatingText(chest.x, chest.y - 44, "免费大招", "#ffe27a");
+    showBanner("宝箱雷罚", 1.45);
+    castUltimate({ free: true, levelOverride: Math.max(1, game.player.ultimate.level) });
+  } else {
+    addFloatingText(chest.x, chest.y - 44, "虚空伏击", "#ff7bb0");
+    showBanner("宝箱惊动了虚空", 1.45);
+    summonChestEnemies(chest);
+  }
+}
+
+function summonChestEnemies(chest) {
+  const count = game.phase === "phase3" ? 8 : game.phase === "phase2" ? 6 : game.phase === "weak" ? 5 : 4;
+  for (let i = 0; i < count && game.enemies.length < MAX_ENEMIES; i += 1) {
+    const angle = randomRange(0, Math.PI * 2);
+    const distance = randomRange(90, 165);
+    spawnEnemy(pickEnemyTypeForPhase(), {
+      x: clamp(chest.x + Math.cos(angle) * distance, 40, WORLD.width - 40),
+      y: clamp(chest.y + Math.sin(angle) * distance, 40, WORLD.height - 40),
+    });
+  }
 }
 
 function updateEnemies(dt) {
@@ -465,6 +597,24 @@ function updatePlayerProjectiles(dt) {
       }
     }
 
+    if (!projectile.remove) {
+      if (!projectile.hitChestIds) projectile.hitChestIds = new Set();
+      for (const chest of game.chests) {
+        if (chest.remove || projectile.hitChestIds.has(chest.id)) continue;
+        if (distanceBetween(projectile, chest) < projectile.radius + chest.radius) {
+          projectile.hitChestIds.add(chest.id);
+          hitChest(chest, projectile.kind || "wind");
+          if (projectile.kind !== "tornado") {
+            projectile.pierce -= 1;
+          }
+          if (projectile.pierce <= 0 && projectile.kind !== "tornado") {
+            projectile.remove = true;
+            break;
+          }
+        }
+      }
+    }
+
     if (!projectile.remove && !projectile.hitBoss && distanceBetween(projectile, boss) < projectile.radius + boss.radius) {
       projectile.hitBoss = true;
       damageBoss(projectile.kind === "tornado" ? projectile.bossDamage : projectile.damage * 1.25, projectile.kind || "wind");
@@ -581,6 +731,8 @@ function castLightning() {
 
     if (target.kind === "boss") {
       damageBoss(damage * 1.28, "lightning");
+    } else if (target.kind === "chest") {
+      hitChest(target.chest, "lightning");
     } else {
       damageEnemy(target, damage, "lightning");
     }
@@ -611,6 +763,7 @@ function castFrostRing() {
       damageEnemy(enemy, damage, "frost");
     }
   }
+  damageChestsInRadius(player.x, player.y, radius, "frost");
 
   if (distanceBetween(player, game.boss) < radius + game.boss.radius) {
     damageBoss(damage * 1.05, "frost");
@@ -642,6 +795,7 @@ function castWindBlades() {
       life: 1.7,
       spin: randomRange(0, Math.PI * 2),
       hitIds: new Set(),
+      hitChestIds: new Set(),
       hitBoss: false,
     });
   }
@@ -676,7 +830,7 @@ function tryCastSweepingDash() {
   const exitDistance = (target.radius + player.radius + 34) * 2;
   const endX = clamp(target.x + Math.cos(angle) * exitDistance, player.radius, WORLD.width - player.radius);
   const endY = clamp(target.y + Math.sin(angle) * exitDistance, player.radius, WORLD.height - player.radius);
-  const targetKey = target.kind === "boss" ? "boss" : target.enemy.id;
+  const targetKey = target.kind === "boss" ? "boss" : target.kind === "chest" ? `chest:${target.chest.id}` : target.enemy.id;
   const enemyDamage = 48 + (dashLevel - 1) * 16;
   const bossDamage = 58 + (dashLevel - 1) * 18;
 
@@ -703,6 +857,8 @@ function tryCastSweepingDash() {
 
   if (target.kind === "boss") {
     damageBoss(bossDamage, "dash");
+  } else if (target.kind === "chest") {
+    hitChest(target.chest, "dash");
   } else {
     damageEnemy(target.enemy, enemyDamage, "dash");
   }
@@ -729,6 +885,22 @@ function findSweepingDashTarget() {
         x: enemy.x,
         y: enemy.y,
         radius: enemy.radius,
+      };
+      bestDistance = distance;
+    }
+  }
+
+  for (const chest of game.chests) {
+    const key = `chest:${chest.id}`;
+    if (chest.remove || player.dash.targetCooldowns.has(key)) continue;
+    const distance = distanceBetween(player, chest);
+    if (distance <= range + chest.radius && distance < bestDistance) {
+      best = {
+        kind: "chest",
+        chest,
+        x: chest.x,
+        y: chest.y,
+        radius: chest.radius,
       };
       bestDistance = distance;
     }
@@ -770,6 +942,7 @@ function castGaleTornado() {
     life: 1.8,
     spin: randomRange(0, Math.PI * 2),
     hitIds: new Set(),
+    hitChestIds: new Set(),
     hitBoss: false,
   });
 
@@ -778,18 +951,23 @@ function castGaleTornado() {
   addFloatingText(player.x, player.y - 44, "疾风龙卷", "#9ffff4");
 }
 
-function castUltimate() {
+function castUltimate(options = {}) {
   const player = game.player;
   const ultimate = player.ultimate;
-  if (ultimate.charges <= 0 || ultimate.level <= 0) return;
+  const free = Boolean(options.free);
+  const level = Math.max(1, options.levelOverride || ultimate.level);
+  if (!free && (ultimate.charges <= 0 || ultimate.level <= 0)) return false;
 
-  ultimate.charges -= 1;
+  if (!free) {
+    ultimate.charges -= 1;
+  }
   ultimate.castTimer = 0.82;
+  ultimate.castLevel = level;
   game.shake = Math.max(game.shake, 2.4);
 
-  const radius = 460 + ultimate.level * 72;
-  const enemyDamage = 210 + ultimate.level * 95;
-  const bossDamage = 430 + ultimate.level * 185;
+  const radius = 460 + level * 72;
+  const enemyDamage = 210 + level * 95;
+  const bossDamage = 430 + level * 185;
   createRing(player.x, player.y, radius, "#ffe27a", 0.72, 8);
   createRing(player.x, player.y, radius * 0.58, "#9ffff4", 0.55, 5);
   burst(player.x, player.y, 70, "#ffe27a", 520, 0.82);
@@ -800,11 +978,14 @@ function castUltimate() {
     createBolt(player.x, player.y, enemy.x, enemy.y, "#ffe27a", 0.18);
     damageEnemy(enemy, enemyDamage, "ultimate");
   }
+  damageChestsInRadius(player.x, player.y, radius, "ultimate");
 
   if (distanceBetween(player, game.boss) < radius + game.boss.radius) {
     createBolt(player.x, player.y, game.boss.x, game.boss.y, "#ffe27a", 0.24);
     damageBoss(bossDamage, "ultimate");
   }
+
+  return true;
 }
 
 function updateOrbitingOrbs(dt) {
@@ -832,6 +1013,7 @@ function updateOrbitingOrbs(dt) {
         burst(enemy.x, enemy.y, 5, "#ffe27a", 80, 0.25);
       }
     }
+    damageChestsInRadius(orb.x, orb.y, orb.radius, "orbs", 0.38);
 
     if (distanceBetween(orb, game.boss) < orb.radius + game.boss.radius) {
       damageBoss(damage * dt * 3.1, "orbs");
@@ -856,6 +1038,7 @@ function updateStormField(dt) {
       burst(enemy.x, enemy.y, 3, "#62f4cd", 55, 0.24);
     }
   }
+  damageChestsInRadius(player.x, player.y, radius, "storm", 0.55);
 
   if (distanceBetween(player, game.boss) < radius + game.boss.radius) {
     damageBoss(damagePerSecond * dt * 1.25, "storm");
@@ -865,7 +1048,7 @@ function updateStormField(dt) {
 function findLightningTarget(origin, range, hitTargets) {
   let best = null;
   let bestDistance = Infinity;
-  const hitIds = new Set(hitTargets.filter((target) => target.kind !== "boss").map((target) => target.id));
+  const hitKeys = new Set(hitTargets.map((target) => target.kind === "boss" ? "boss" : target.kind === "chest" ? `chest:${target.chest.id}` : `enemy:${target.id}`));
   const bossAlreadyHit = hitTargets.some((target) => target.kind === "boss");
 
   if (!bossAlreadyHit) {
@@ -877,8 +1060,23 @@ function findLightningTarget(origin, range, hitTargets) {
     }
   }
 
+  for (const chest of game.chests) {
+    if (chest.remove || hitKeys.has(`chest:${chest.id}`)) continue;
+    const distance = distanceBetween(origin, chest);
+    if (distance < range && distance < bestDistance) {
+      best = {
+        kind: "chest",
+        chest,
+        x: chest.x,
+        y: chest.y,
+        radius: chest.radius,
+      };
+      bestDistance = distance;
+    }
+  }
+
   for (const enemy of queryEnemies(origin.x, origin.y, range)) {
-    if (enemy.dead || hitIds.has(enemy.id)) continue;
+    if (enemy.dead || hitKeys.has(`enemy:${enemy.id}`)) continue;
     const distance = distanceBetween(origin, enemy);
     if (distance < range && distance < bestDistance) {
       best = enemy;
@@ -967,7 +1165,7 @@ function fireBossOrbs(count, speed) {
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       radius: game.phase === "phase3" ? 12 : 10,
-      damage: game.phase === "weak" ? 10 : game.phase === "phase3" ? 18 : 14,
+      damage: game.phase === "weak" ? 20 : game.phase === "phase3" ? 36 : 28,
       life: 4.2,
       color: "#b767ff",
       kind: "boss",
@@ -1003,7 +1201,7 @@ function createBossHazard() {
     radius: game.phase === "phase3" ? 78 : 66,
     delay: game.phase === "phase3" ? 0.88 : 1.1,
     life: 1.4,
-    damage: game.phase === "phase3" ? 24 : 18,
+    damage: game.phase === "phase3" ? 48 : 36,
     exploded: false,
   });
 }
@@ -1072,7 +1270,7 @@ function damageBoss(amount, source) {
   const boss = game.boss;
   if (boss.hp <= 0) return;
 
-  const multiplier = game.phase === "weak" ? 2.05 : 0.1;
+  const multiplier = game.phase === "weak" ? 2.05 : 1;
   const finalDamage = amount * multiplier;
   const previousHp = boss.hp;
   boss.hp -= finalDamage;
@@ -1081,13 +1279,9 @@ function damageBoss(amount, source) {
     addFloatingText(boss.x + randomRange(-18, 18), boss.y - boss.radius, Math.round(finalDamage).toString(), game.phase === "weak" ? "#ffd36b" : "#bda6df");
   }
 
-  if (game.phase !== "weak" && boss.hp < 360) {
-    boss.hp = 360;
-  }
+  healPlayerFromDamage(Math.max(0, previousHp - Math.max(0, boss.hp)));
 
-  healPlayerFromDamage(Math.max(0, previousHp - boss.hp));
-
-  if (boss.hp <= 0 && game.phase === "weak") {
+  if (boss.hp <= 0) {
     boss.hp = 0;
     finishGame("victory", getCharacter().victoryReason);
   }
@@ -1163,7 +1357,7 @@ function openLevelUp(mode = "level") {
   game.upgradeMode = mode;
   game.state = "levelUpPaused";
   const character = getCharacter();
-  ui.levelUpTitle.textContent = mode === "opening" ? character.openingTitle : character.levelTitle;
+  ui.levelUpTitle.textContent = mode === "opening" ? character.openingTitle : mode === "chest" ? "宝箱馈赠" : character.levelTitle;
   game.upgrades = pickUpgradeOptions(mode);
   ui.upgradeOptions.innerHTML = "";
 
@@ -1172,7 +1366,7 @@ function openLevelUp(mode = "level") {
     button.className = "upgrade-card";
     button.type = "button";
     button.innerHTML = `
-      <small>${mode === "opening" ? "开局" : upgrade.type}</small>
+      <small>${mode === "opening" ? "开局" : mode === "chest" ? "宝箱" : upgrade.type}</small>
       <h2>${upgrade.name}</h2>
       <p>${upgrade.desc}</p>
     `;
@@ -1194,6 +1388,18 @@ function pickUpgradeOptions(mode = "level") {
     const common = COMMON_SKILL_IDS.map((id) => createSkillUpgrade(id)).filter(Boolean);
     shuffle(common);
     return [...required, ...common].slice(0, 3);
+  }
+
+  if (mode === "chest") {
+    const pool = [...skillUpgrades];
+    if (player.ultimate.level < 6) {
+      pool.push({
+        ...ULTIMATE_UPGRADE,
+        name: player.ultimate.level > 0 ? `${ULTIMATE_UPGRADE.name} +1` : `解锁 ${ULTIMATE_UPGRADE.name}`,
+      });
+    }
+    shuffle(pool);
+    return pool.slice(0, 3);
   }
 
   const pool = [...skillUpgrades];
@@ -1248,8 +1454,9 @@ function chooseUpgrade(index) {
   game.state = "playing";
 
   if (game.upgradeMode === "opening") {
+    seedOpeningChests();
     showBanner(PHASES.phase1.banner, 2.8);
-  } else {
+  } else if (game.upgradeMode === "level") {
     tryLevelUp();
   }
 }
@@ -1262,7 +1469,7 @@ function finishGame(state, reason) {
   ui.resultTitle.textContent = reason;
   ui.resultLevel.textContent = game.player.level.toString();
   ui.resultKills.textContent = game.kills.toString();
-  ui.resultTime.textContent = formatTime(Math.min(game.elapsed, GAME_DURATION));
+  ui.resultTime.textContent = formatTime(game.elapsed);
   ui.resultPanel.classList.remove("hidden");
 }
 
@@ -1278,13 +1485,12 @@ function updateUI() {
   const healthRatio = clamp(player.hp / player.maxHp, 0, 1);
   const xpRatio = clamp(player.xp / player.xpToNext, 0, 1);
   const bossRatio = clamp(boss.hp / boss.maxHp, 0, 1);
-  const remaining = Math.max(0, GAME_DURATION - game.elapsed);
 
   ui.healthText.textContent = `${Math.ceil(player.hp)} / ${player.maxHp}${player.shield > 0 ? "  护盾" : ""}`;
   ui.healthFill.style.transform = `scaleX(${healthRatio})`;
   ui.xpText.textContent = `Lv.${player.level}`;
   ui.xpFill.style.transform = `scaleX(${xpRatio})`;
-  ui.timeText.textContent = formatTime(remaining);
+  ui.timeText.textContent = formatTime(game.elapsed);
   ui.ultimateText.textContent = player.ultimate.charges > 0 ? `R x${player.ultimate.charges}` : "未充能";
   ui.ultimatePill.classList.toggle("ready", player.ultimate.charges > 0 && game.state === "playing");
   ui.ultimatePill.classList.toggle("disabled", player.ultimate.charges <= 0 || game.state !== "playing");
@@ -1309,6 +1515,7 @@ function drawGame() {
   ctx.translate(-game.camera.x, -game.camera.y);
   drawBackground();
   drawExpOrbs();
+  drawChests();
   drawHazards();
   drawUltimateEffect();
   drawProjectiles();
@@ -1449,6 +1656,104 @@ function drawExpOrbs() {
   }
 }
 
+function drawChests() {
+  for (const chest of game.chests) {
+    if (!isVisible(chest.x, chest.y, chest.radius + RENDER_MARGIN)) continue;
+
+    const pulse = 0.8 + Math.sin(chest.pulse * 3) * 0.14;
+    const flash = clamp(chest.flash / 0.24, 0, 1);
+    const progress = clamp(chest.hits / chest.hitsRequired, 0, 1);
+
+    ctx.save();
+    ctx.translate(chest.x, chest.y);
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
+    ctx.beginPath();
+    ctx.ellipse(0, chest.radius * 0.72, chest.radius * 1.3, chest.radius * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = "lighter";
+    const aura = ctx.createRadialGradient(0, 0, chest.radius * 0.4, 0, 0, chest.radius * (2.2 + pulse * 0.25));
+    aura.addColorStop(0, `rgba(255, 211, 107, ${0.14 + flash * 0.16})`);
+    aura.addColorStop(0.55, "rgba(168, 92, 255, 0.12)");
+    aura.addColorStop(1, "rgba(168, 92, 255, 0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(0, 0, chest.radius * (2.2 + pulse * 0.25), 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = flash > 0 ? "rgba(255, 236, 160, 0.95)" : "rgba(255, 211, 107, 0.72)";
+    const body = ctx.createLinearGradient(0, -chest.radius, 0, chest.radius);
+    body.addColorStop(0, "#7e3bca");
+    body.addColorStop(0.48, "#3f1c68");
+    body.addColorStop(1, "#1b102e");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    roundedRectPath(-chest.radius, -chest.radius * 0.45, chest.radius * 2, chest.radius * 1.28, 7);
+    ctx.fill();
+    ctx.stroke();
+
+    const lid = ctx.createLinearGradient(0, -chest.radius * 1.1, 0, 0);
+    lid.addColorStop(0, "#ffd36b");
+    lid.addColorStop(0.2, "#8e4dff");
+    lid.addColorStop(1, "#2a1645");
+    ctx.fillStyle = lid;
+    ctx.beginPath();
+    roundedRectPath(-chest.radius * 1.08, -chest.radius * 0.9, chest.radius * 2.16, chest.radius * 0.62, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255, 211, 107, 0.72)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, -chest.radius * 0.84);
+    ctx.lineTo(0, chest.radius * 0.76);
+    ctx.moveTo(-chest.radius * 0.9, -chest.radius * 0.22);
+    ctx.lineTo(chest.radius * 0.9, -chest.radius * 0.22);
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffd36b";
+    ctx.shadowColor = "#ffd36b";
+    ctx.shadowBlur = perf.shouldReduceEffects() ? 0 : 12;
+    ctx.beginPath();
+    ctx.arc(0, chest.radius * 0.05, 5 + flash * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    for (let i = 0; i < chest.hitsRequired; i += 1) {
+      const filled = i < chest.hits;
+      ctx.fillStyle = filled ? "#ffd36b" : "rgba(255, 255, 255, 0.18)";
+      ctx.fillRect(-chest.radius + i * 17, chest.radius + 9, 12, 4);
+    }
+
+    if (progress > 0) {
+      ctx.strokeStyle = "rgba(255, 211, 107, 0.9)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, chest.radius * (1.28 + flash * 0.14), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
+function roundedRectPath(x, y, width, height, radius) {
+  const r = Math.min(radius, width * 0.5, height * 0.5);
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
 function drawHazards() {
   for (const hazard of game.hazards) {
     if (!isVisible(hazard.x, hazard.y, hazard.radius + RENDER_MARGIN)) continue;
@@ -1486,7 +1791,7 @@ function drawUltimateEffect() {
   if (timer <= 0) return;
 
   const alpha = clamp(timer / 0.82, 0, 1);
-  const radius = 460 + player.ultimate.level * 72;
+  const radius = 460 + Math.max(player.ultimate.level, player.ultimate.castLevel || 0) * 72;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   const field = ctx.createRadialGradient(player.x, player.y, 30, player.x, player.y, radius);
@@ -2400,6 +2705,7 @@ function createDebugSnapshot() {
     quality: perf.quality,
     entities: {
       enemies: game.enemies.length,
+      chests: game.chests.length,
       playerProjectiles: game.playerProjectiles.length,
       hostileProjectiles: game.hostileProjectiles.length,
       particles: game.particles.length,

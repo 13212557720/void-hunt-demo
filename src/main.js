@@ -1,7 +1,7 @@
-import { createVoidHuntGame } from "./game.js?v=20260630-boss";
+import { createVoidHuntGame } from "./game.js?v=20260630-chests";
 import { createInputController } from "./input.js";
 import { createPerformanceMonitor } from "./performance.js";
-import { createSpriteSheets } from "./resources.js?v=20260630-boss";
+import { createSpriteSheets } from "./resources.js?v=20260630-chests";
 import { createUi } from "./ui.js";
 
 const ui = createUi();

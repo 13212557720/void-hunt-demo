@@ -1,8 +1,10 @@
 export const WORLD = { width: 3600, height: 2600 };
-export const GAME_DURATION = 180;
 export const WEAK_START = 160;
+export const BOSS_MAX_HP = 600;
 export const PLAYER_BASE_SPEED = 260;
 export const MAX_ENEMIES = 190;
+export const MAX_CHESTS = 5;
+export const CHEST_HITS_REQUIRED = 3;
 export const RENDER_MARGIN = 250;
 export const MAX_PARTICLES = 220;
 export const MAX_RINGS = 64;
