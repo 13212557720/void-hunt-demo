@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>虚空追猎</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css?v=20260630-mobile-fit" />
+    <link rel="stylesheet" href="styles.css?v=20260630-results-gsap" />
   </head>
   <body>
     <main id="game-shell" aria-label="虚空追猎">
@@ -36,7 +36,7 @@
         </div>
         <div class="stat-pill">
           <span>用时</span>
-          <strong id="time-text">03:00</strong>
+          <strong id="time-text">00:00</strong>
         </div>
         <div id="ultimate-pill" class="stat-pill ultimate-pill disabled">
           <span>大招</span>
@@ -105,24 +105,36 @@
       </section>
 
       <section id="result-panel" class="overlay hidden" aria-label="结算">
-        <div class="result-box">
-          <p id="result-kicker" class="result-kicker">战斗结束</p>
-          <h1 id="result-title">风暴撕裂了虚空</h1>
-          <dl class="result-stats">
-            <div>
-              <dt>等级</dt>
-              <dd id="result-level">1</dd>
-            </div>
-            <div>
-              <dt>击杀</dt>
-              <dd id="result-kills">0</dd>
-            </div>
-            <div>
-              <dt>存活</dt>
-              <dd id="result-time">00:00</dd>
-            </div>
-          </dl>
-          <button id="restart-button" type="button">重新开始</button>
+        <div id="result-card" class="result-box result-with-art">
+          <figure class="result-art-frame">
+            <img
+              id="result-image"
+              class="result-image"
+              src="assets/results/storm-defeat.jpg"
+              alt="风暴之怒战败图"
+              loading="eager"
+            />
+            <figcaption id="result-caption" class="result-caption">虚空战场记录</figcaption>
+          </figure>
+          <div class="result-summary">
+            <p id="result-kicker" class="result-kicker">战斗结束</p>
+            <h1 id="result-title">风暴撕裂了虚空</h1>
+            <dl class="result-stats">
+              <div>
+                <dt>等级</dt>
+                <dd id="result-level">1</dd>
+              </div>
+              <div>
+                <dt>击杀</dt>
+                <dd id="result-kills">0</dd>
+              </div>
+              <div>
+                <dt>存活</dt>
+                <dd id="result-time">00:00</dd>
+              </div>
+            </dl>
+            <button id="restart-button" type="button">重新开始</button>
+          </div>
         </div>
       </section>
 
@@ -138,6 +150,7 @@
       <div id="orientation-hint" class="orientation-hint" aria-hidden="true">请横屏游玩</div>
     </main>
 
-    <script type="module" src="src/main.js?v=20260630-chests"></script>
+    <script src="assets/vendor/gsap.min.js?v=3.15.0"></script>
+    <script type="module" src="src/main.js?v=20260630-results-gsap"></script>
   </body>
 </html>

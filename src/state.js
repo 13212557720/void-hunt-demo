@@ -1,4 +1,4 @@
-import { BOSS_MAX_HP, CHARACTERS, SKILLS, WORLD } from "./config.js";
+import { BOSS_MAX_HP, CHARACTERS, SKILLS, WORLD } from "./config.js?v=20260630-results-gsap";
 import { mulberry32 } from "./utils.js";
 
 export function createGameState() {
@@ -89,6 +89,7 @@ export function createGameState() {
     upgradeMode: "level",
     shake: 0,
     resultReason: "",
+    resultImage: "",
   };
 }
 

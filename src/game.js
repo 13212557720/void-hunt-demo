@@ -20,10 +20,10 @@ import {
   ULTIMATE_UPGRADE,
   WEAK_START,
   WORLD,
-} from "./config.js";
+} from "./config.js?v=20260630-results-gsap";
 import { createSpatialIndex } from "./performance.js";
-import { createGameState, createSkillLevels } from "./state.js?v=20260630-chests";
-import { hideStartVideo, updateTouchUltimateButton } from "./ui.js";
+import { createGameState, createSkillLevels } from "./state.js?v=20260630-results-gsap";
+import { hideStartVideo, updateTouchUltimateButton } from "./ui.js?v=20260630-results-gsap";
 import { clamp, colorWithAlpha, distanceBetween, formatTime, lerp, randomLike, randomRange, shuffle } from "./utils.js";
 
 export function createVoidHuntGame({ canvas, ctx, input, perf, sprites, ui }) {
@@ -33,6 +33,25 @@ let enemyIndexReady = false;
 let game = createGameState();
 let enemyId = 1;
 let chestId = 1;
+let resultImagesPreloaded = false;
+
+const RESULT_IMAGES = {
+  victory: {
+    src: "assets/results/boss-defeat.jpg",
+    alt: "暗紫虚空术士战败图",
+    caption: "暗紫虚空术士已倒下",
+  },
+  storm: {
+    src: "assets/results/storm-defeat.jpg",
+    alt: "风暴之怒战败图",
+    caption: "风暴之怒被虚空吞噬",
+  },
+  windman: {
+    src: "assets/results/windman-defeat.jpg",
+    alt: "快乐风男战败图",
+    caption: "快乐风男倒在风暴中心",
+  },
+};
 
 function resetGame() {
   enemyId = 1;
@@ -40,6 +59,7 @@ function resetGame() {
   enemyIndexReady = false;
   game = createGameState();
   ui.resultPanel.classList.add("hidden");
+  ui.resultPanel.classList.remove("result-victory", "result-defeat");
   ui.levelUpPanel.classList.add("hidden");
   ui.characterPanel.classList.add("hidden");
   ui.startPanel.classList.add("hidden");
@@ -48,6 +68,7 @@ function resetGame() {
 
 function startGame() {
   if (game.state !== "ready") return;
+  preloadResultImages();
   game.state = "characterSelect";
   ui.startPanel.classList.add("hidden");
   ui.characterPanel.classList.remove("hidden");
@@ -86,6 +107,21 @@ function selectCharacter(characterId) {
 
 function getCharacter() {
   return CHARACTERS[game.player.characterId] || CHARACTERS.storm;
+}
+
+function preloadResultImages() {
+  if (resultImagesPreloaded) return;
+  resultImagesPreloaded = true;
+  for (const config of Object.values(RESULT_IMAGES)) {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = config.src;
+  }
+}
+
+function getResultImageConfig(state) {
+  if (state === "victory") return RESULT_IMAGES.victory;
+  return RESULT_IMAGES[game.player.characterId] || RESULT_IMAGES.storm;
 }
 
 function resizeCanvas() {
@@ -156,7 +192,7 @@ function updatePhase() {
 
     if (nextPhase === "weak" && !game.weakStarted) {
       game.weakStarted = true;
-      game.boss.hp = Math.min(game.boss.hp, 290);
+      game.boss.hp = Math.min(game.boss.hp, 5800);
       game.boss.weakPulse = 3;
       createRing(game.boss.x, game.boss.y, 260, "#ffd36b", 1.1, 7);
       burst(game.boss.x, game.boss.y, 52, "#ffd36b", 360, 1.1);
@@ -1465,12 +1501,48 @@ function finishGame(state, reason) {
   if (game.state === "victory" || game.state === "defeat") return;
   game.state = state;
   game.resultReason = reason;
+  const resultImage = getResultImageConfig(state);
+  game.resultImage = resultImage.src;
+  ui.resultPanel.classList.toggle("result-victory", state === "victory");
+  ui.resultPanel.classList.toggle("result-defeat", state === "defeat");
+  if (ui.resultImage) {
+    ui.resultImage.src = resultImage.src;
+    ui.resultImage.alt = resultImage.alt;
+  }
+  if (ui.resultCaption) {
+    ui.resultCaption.textContent = resultImage.caption;
+  }
   ui.resultKicker.textContent = state === "victory" ? "胜利" : "失败";
   ui.resultTitle.textContent = reason;
   ui.resultLevel.textContent = game.player.level.toString();
   ui.resultKills.textContent = game.kills.toString();
   ui.resultTime.textContent = formatTime(game.elapsed);
   ui.resultPanel.classList.remove("hidden");
+  animateResultPanel();
+}
+
+function animateResultPanel() {
+  const gsap = window.gsap;
+  if (!gsap || !ui.resultCard) return;
+
+  const targets = [
+    ui.resultCard,
+    ui.resultImage,
+    ui.resultCaption,
+    ui.resultKicker,
+    ui.resultTitle,
+    ...ui.resultPanel.querySelectorAll(".result-stats div"),
+    ui.restartButton,
+  ].filter(Boolean);
+  gsap.killTweensOf(targets);
+
+  const timeline = gsap.timeline({ defaults: { ease: "power3.out" } });
+  timeline
+    .fromTo(ui.resultCard, { autoAlpha: 0, y: 24, scale: 0.985 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.46 })
+    .fromTo(ui.resultImage, { autoAlpha: 0, scale: 1.08 }, { autoAlpha: 1, scale: 1, duration: 0.62 }, "-=0.22")
+    .fromTo([ui.resultKicker, ui.resultTitle], { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, stagger: 0.08, duration: 0.36 }, "-=0.3")
+    .fromTo(ui.resultPanel.querySelectorAll(".result-stats div"), { autoAlpha: 0, y: 18 }, { autoAlpha: 1, y: 0, stagger: 0.06, duration: 0.32 }, "-=0.18")
+    .fromTo(ui.restartButton, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.28 }, "-=0.12");
 }
 
 function showBanner(text, duration = 2) {
@@ -2698,6 +2770,7 @@ function createDebugSnapshot() {
     hp: game.player.hp,
     ultimate: { ...game.player.ultimate },
     bossHp: game.boss.hp,
+    resultImage: game.resultImage,
     enemies: game.enemies.length,
     kills: game.kills,
     upgradeMode: game.upgradeMode,

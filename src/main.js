@@ -1,8 +1,8 @@
-import { createVoidHuntGame } from "./game.js?v=20260630-chests";
+import { createVoidHuntGame } from "./game.js?v=20260630-results-gsap";
 import { createInputController } from "./input.js";
 import { createPerformanceMonitor } from "./performance.js";
 import { createSpriteSheets } from "./resources.js?v=20260630-chests";
-import { createUi } from "./ui.js";
+import { createUi } from "./ui.js?v=20260630-results-gsap";
 
 const ui = createUi();
 const ctx = ui.canvas.getContext("2d");
