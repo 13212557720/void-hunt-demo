@@ -61,6 +61,7 @@ export function createGameState() {
       hazardTimer: 5.2,
       summonTimer: 8,
       weakPulse: 0,
+      castTimer: 0,
     },
     camera: { x: 0, y: 0 },
     view: { width: window.innerWidth, height: window.innerHeight, dpr: 1 },

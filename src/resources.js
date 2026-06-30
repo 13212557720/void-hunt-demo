@@ -30,6 +30,14 @@ export function createSpriteSheets() {
         { x: 1168, y: 572, w: 340, h: 380 },
       ],
     }),
+    boss: createSpriteSheet("assets/boss.png", false, {
+      idle: [
+        { x: 0, y: 0, w: 275, h: 435, anchorX: 0.42, anchorY: 0.58 },
+      ],
+      cast: [
+        { x: 275, y: 0, w: 295, h: 300, anchorX: 0.46, anchorY: 0.55 },
+      ],
+    }),
   };
 }
 

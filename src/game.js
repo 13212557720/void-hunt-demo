@@ -21,7 +21,7 @@ import {
   WORLD,
 } from "./config.js";
 import { createSpatialIndex } from "./performance.js";
-import { createGameState, createSkillLevels } from "./state.js";
+import { createGameState, createSkillLevels } from "./state.js?v=20260630-boss";
 import { hideStartVideo, updateTouchUltimateButton } from "./ui.js";
 import { clamp, colorWithAlpha, distanceBetween, formatTime, lerp, randomLike, randomRange, shuffle } from "./utils.js";
 
@@ -255,6 +255,7 @@ function updateBoss(dt) {
   boss.y = clamp(boss.y, boss.radius, WORLD.height - boss.radius);
   boss.contactCooldown = Math.max(0, boss.contactCooldown - dt);
   boss.weakPulse = Math.max(0, boss.weakPulse - dt);
+  boss.castTimer = Math.max(0, boss.castTimer - dt);
 
   if (distance < boss.radius + player.radius + 2 && boss.contactCooldown <= 0) {
     damagePlayer(game.phase === "weak" ? 12 : 24);
@@ -956,6 +957,7 @@ function fireBossOrbs(count, speed) {
   const player = game.player;
   const baseAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
   const spread = count === 1 ? 0 : 0.32;
+  boss.castTimer = Math.max(boss.castTimer, 0.36);
 
   for (let i = 0; i < count; i += 1) {
     const angle = baseAngle + (i - (count - 1) / 2) * spread + randomRange(-0.06, 0.06);
@@ -994,6 +996,7 @@ function createBossHazard() {
   if (!Number.isFinite(PHASES[game.phase].hazardCooldown)) return;
   const player = game.player;
   const lead = game.phase === "phase3" ? 0.6 : 0.42;
+  game.boss.castTimer = Math.max(game.boss.castTimer, 0.42);
   game.hazards.push({
     x: clamp(player.x + player.velocityX * lead + randomRange(-38, 38), 70, WORLD.width - 70),
     y: clamp(player.y + player.velocityY * lead + randomRange(-38, 38), 70, WORLD.height - 70),
@@ -1009,6 +1012,7 @@ function summonBossMinions() {
   if (!Number.isFinite(PHASES[game.phase].summonCooldown)) return;
   const boss = game.boss;
   const count = game.phase === "phase3" ? 7 : game.phase === "weak" ? 3 : 4;
+  boss.castTimer = Math.max(boss.castTimer, 0.48);
   for (let i = 0; i < count && game.enemies.length < MAX_ENEMIES; i += 1) {
     const angle = randomRange(0, Math.PI * 2);
     const distance = randomRange(120, 230);
@@ -1751,23 +1755,175 @@ function drawBomberEnemy(enemy, type) {
 function drawBoss() {
   const boss = game.boss;
   const weak = game.phase === "weak";
+  const floatY = Math.sin(game.elapsed * 2.35 + 0.6) * 6 + Math.sin(game.elapsed * 5.4) * 1.2;
+  const facingSign = game.player.x < boss.x ? -1 : 1;
+
   ctx.save();
   ctx.translate(boss.x, boss.y);
+  drawBossAura(boss, weak, floatY);
 
-  const auraRadius = boss.radius * (2.1 + Math.sin(game.elapsed * 4) * 0.08 + boss.weakPulse * 0.12);
-  const aura = ctx.createRadialGradient(0, 0, boss.radius * 0.5, 0, 0, auraRadius);
+  if (!drawBossSpriteBody(boss, weak, facingSign, floatY)) {
+    drawFallbackBossBody(boss, weak, floatY);
+  }
+
+  drawBossPressureEffects(boss, weak, facingSign, floatY);
+  ctx.restore();
+}
+
+function drawBossAura(boss, weak, floatY) {
+  const auraRadius = boss.radius * (2.45 + Math.sin(game.elapsed * 4) * 0.1 + boss.weakPulse * 0.14);
+  const aura = ctx.createRadialGradient(0, floatY * 0.35, boss.radius * 0.42, 0, floatY * 0.35, auraRadius);
   aura.addColorStop(0, weak ? "rgba(255, 211, 107, 0.22)" : "rgba(168, 92, 255, 0.32)");
   aura.addColorStop(1, "rgba(168, 92, 255, 0)");
   ctx.fillStyle = aura;
   ctx.beginPath();
-  ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+  ctx.arc(0, floatY * 0.35, auraRadius, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+  ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
   ctx.beginPath();
-  ctx.ellipse(0, boss.radius * 0.8, boss.radius * 1.25, boss.radius * 0.48, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, boss.radius * 1.2, boss.radius * 1.55, boss.radius * 0.42, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = weak ? "rgba(255, 211, 107, 0.5)" : "rgba(188, 113, 255, 0.42)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(0, boss.radius * 1.15, boss.radius * 1.7, boss.radius * 0.38, Math.sin(game.elapsed) * 0.08, 0, Math.PI * 2);
+  ctx.stroke();
+  if (!perf.shouldReduceEffects()) {
+    ctx.strokeStyle = weak ? "rgba(255, 211, 107, 0.28)" : "rgba(255, 94, 170, 0.24)";
+    ctx.beginPath();
+    ctx.ellipse(0, boss.radius * 1.14, boss.radius * 2.1, boss.radius * 0.52, -Math.sin(game.elapsed * 0.8) * 0.12, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBossSpriteBody(boss, weak, facingSign, floatY) {
+  const sprite = SPRITE_SHEETS.boss;
+  if (!sprite.loaded || !sprite.source) return false;
+
+  const casting = boss.castTimer > 0.02;
+  const frames = casting ? sprite.frames.cast : sprite.frames.idle;
+  const frameRate = casting ? 10 : 1.7;
+  const frame = frames[Math.floor(game.elapsed * frameRate) % frames.length];
+  const visualHeight = (casting ? 136 : 168) + (weak ? 5 : 0);
+  const scale = visualHeight / frame.h;
+  const drawWidth = frame.w * scale;
+  const drawHeight = frame.h * scale;
+  const footY = casting ? boss.radius * 0.35 : boss.radius * 0.44;
+  const sway = Math.sin(game.elapsed * 1.45) * (casting ? 0.02 : 0.04);
+
+  ctx.save();
+  ctx.translate(0, floatY);
+  ctx.rotate(sway);
+  ctx.scale(facingSign, 1);
+  ctx.imageSmoothingEnabled = true;
+
+  if (!perf.shouldReduceEffects()) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = weak ? 0.34 : 0.22;
+    ctx.shadowColor = weak ? "#ffd36b" : "#b767ff";
+    ctx.shadowBlur = weak ? 24 : 18;
+    ctx.drawImage(
+      sprite.source,
+      frame.x,
+      frame.y,
+      frame.w,
+      frame.h,
+      -drawWidth * frame.anchorX - 3,
+      footY - drawHeight * frame.anchorY - 3,
+      drawWidth + 6,
+      drawHeight + 6,
+    );
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = weak && Math.sin(game.elapsed * 18) > 0.72 ? 0.86 : 1;
+  ctx.drawImage(
+    sprite.source,
+    frame.x,
+    frame.y,
+    frame.w,
+    frame.h,
+    -drawWidth * frame.anchorX,
+    footY - drawHeight * frame.anchorY,
+    drawWidth,
+    drawHeight,
+  );
+
+  if (casting) {
+    const slashPulse = 0.65 + Math.sin(game.elapsed * 18) * 0.22;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = `rgba(202, 110, 255, ${0.34 + slashPulse * 0.28})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(-boss.radius * 1.05, -boss.radius * 0.35, boss.radius * (0.9 + slashPulse * 0.12), -0.45, Math.PI * 1.05);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+  return true;
+}
+
+function drawBossPressureEffects(boss, weak, facingSign, floatY) {
+  ctx.save();
+  ctx.translate(0, floatY);
+  ctx.scale(facingSign, 1);
+  ctx.globalCompositeOperation = "lighter";
+
+  const orbPulse = 0.7 + Math.sin(game.elapsed * 7.5) * 0.18 + boss.castTimer * 0.45;
+  const orbX = -boss.radius * 1.25;
+  const orbY = -boss.radius * 0.68;
+  const orbRadius = boss.radius * (0.28 + orbPulse * 0.08);
+  const orb = ctx.createRadialGradient(orbX, orbY, 2, orbX, orbY, boss.radius * 0.9);
+  orb.addColorStop(0, weak ? "rgba(255, 230, 144, 0.9)" : "rgba(249, 219, 255, 0.9)");
+  orb.addColorStop(0.42, weak ? "rgba(255, 211, 107, 0.42)" : "rgba(184, 82, 255, 0.58)");
+  orb.addColorStop(1, "rgba(97, 35, 168, 0)");
+  ctx.fillStyle = orb;
+  ctx.beginPath();
+  ctx.arc(orbX, orbY, boss.radius * (0.75 + orbPulse * 0.12), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = weak ? "rgba(255, 211, 107, 0.8)" : "rgba(218, 134, 255, 0.82)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(orbX, orbY, orbRadius, game.elapsed * 3.8, game.elapsed * 3.8 + Math.PI * 1.55);
+  ctx.stroke();
+
+  if (!perf.shouldReduceEffects()) {
+    ctx.strokeStyle = weak ? "rgba(255, 211, 107, 0.34)" : "rgba(188, 113, 255, 0.24)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i += 1) {
+      const t = game.elapsed * 1.8 + i * 1.7;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(t) * boss.radius * 1.2, -boss.radius * 1.15 + Math.sin(t) * 8);
+      ctx.quadraticCurveTo(Math.sin(t * 0.7) * boss.radius * 1.9, -boss.radius * 0.08, Math.cos(t + 1.2) * boss.radius * 1.35, boss.radius * 0.9);
+      ctx.stroke();
+    }
+  }
+
+  if (weak) {
+    ctx.strokeStyle = "rgba(255, 211, 107, 0.88)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-boss.radius * 0.3, -boss.radius * 0.72);
+    ctx.lineTo(-boss.radius * 0.08, -boss.radius * 0.25);
+    ctx.lineTo(-boss.radius * 0.24, boss.radius * 0.22);
+    ctx.moveTo(boss.radius * 0.28, -boss.radius * 0.52);
+    ctx.lineTo(boss.radius * 0.08, 0);
+    ctx.lineTo(boss.radius * 0.32, boss.radius * 0.5);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawFallbackBossBody(boss, weak, floatY) {
+  ctx.save();
+  ctx.translate(0, floatY);
   ctx.strokeStyle = weak ? "rgba(255, 211, 107, 0.9)" : "rgba(188, 113, 255, 0.82)";
   ctx.lineWidth = 5;
   ctx.beginPath();
