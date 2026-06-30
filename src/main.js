@@ -265,6 +265,20 @@ const STAT_UPGRADES = [
     },
   },
   {
+    id: "lifeSteal",
+    name(player) {
+      return player.lifeSteal > 0 ? `生命偷取 +4%（当前 ${Math.round(player.lifeSteal * 100)}%）` : "解锁 生命偷取";
+    },
+    type: "属性",
+    desc: "造成伤害时按比例回复生命，最多叠加到 20%。",
+    isAvailable(player) {
+      return player.lifeSteal < 0.2;
+    },
+    apply(player) {
+      player.lifeSteal = Math.min(0.2, player.lifeSteal + 0.04);
+    },
+  },
+  {
     id: "pickup",
     name: "经验拾取范围 +20%",
     type: "属性",
@@ -305,6 +319,7 @@ function createGame() {
       radius: 16,
       hp: 100,
       maxHp: 100,
+      lifeSteal: 0,
       speedMultiplier: 1,
       pickupRadius: 95,
       level: 1,
@@ -394,6 +409,7 @@ function selectCharacter(characterId) {
   player.characterId = character.id;
   player.maxHp = character.maxHp;
   player.hp = character.maxHp;
+  player.lifeSteal = 0;
   player.speedMultiplier = character.speedMultiplier;
   player.skills = createSkillLevels(character.initialSkills);
   player.cooldowns = {
@@ -1040,7 +1056,7 @@ function tryCastSweepingDash() {
   if (!target) return;
 
   const angle = Math.atan2(target.y - player.y, target.x - player.x);
-  const exitDistance = target.radius + player.radius + 34;
+  const exitDistance = (target.radius + player.radius + 34) * 2;
   const endX = clamp(target.x + Math.cos(angle) * exitDistance, player.radius, WORLD.width - player.radius);
   const endY = clamp(target.y + Math.sin(angle) * exitDistance, player.radius, WORLD.height - player.radius);
   const targetKey = target.kind === "boss" ? "boss" : target.enemy.id;
@@ -1396,7 +1412,9 @@ function summonBossMinions() {
 
 function damageEnemy(enemy, amount, source, showText = true) {
   if (enemy.dead) return;
+  const actualDamage = Math.min(enemy.hp, amount);
   enemy.hp -= amount;
+  healPlayerFromDamage(actualDamage);
 
   if (showText && amount >= 8) {
     addFloatingText(enemy.x, enemy.y - enemy.radius, Math.round(amount).toString(), "#dffcff");
@@ -1436,6 +1454,7 @@ function damageBoss(amount, source) {
 
   const multiplier = game.phase === "weak" ? 2.05 : 0.1;
   const finalDamage = amount * multiplier;
+  const previousHp = boss.hp;
   boss.hp -= finalDamage;
 
   if (Math.random() < 0.18 || finalDamage > 35) {
@@ -1446,9 +1465,26 @@ function damageBoss(amount, source) {
     boss.hp = 360;
   }
 
+  healPlayerFromDamage(Math.max(0, previousHp - boss.hp));
+
   if (boss.hp <= 0 && game.phase === "weak") {
     boss.hp = 0;
     finishGame("victory", getCharacter().victoryReason);
+  }
+}
+
+function healPlayerFromDamage(amount) {
+  const player = game.player;
+  if (game.state !== "playing" || player.lifeSteal <= 0 || amount <= 0 || player.hp <= 0) return;
+
+  const heal = Math.min(8, amount * player.lifeSteal);
+  if (heal <= 0.05) return;
+
+  const before = player.hp;
+  player.hp = Math.min(player.maxHp, player.hp + heal);
+  const gained = player.hp - before;
+  if (gained >= 2) {
+    addFloatingText(player.x, player.y - 36, `+${Math.round(gained)}`, "#8bffd8");
   }
 }
 
@@ -1549,7 +1585,12 @@ function pickUpgradeOptions(mode = "level") {
   }
 
   for (const upgrade of STAT_UPGRADES) {
-    pool.push({ ...upgrade, kind: "stat" });
+    if (upgrade.isAvailable && !upgrade.isAvailable(player)) continue;
+    pool.push({
+      ...upgrade,
+      kind: "stat",
+      name: typeof upgrade.name === "function" ? upgrade.name(player) : upgrade.name,
+    });
   }
 
   shuffle(pool);
