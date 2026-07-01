@@ -1,4 +1,4 @@
-import { BOSS_MAX_HP, CHARACTERS, SKILLS, WORLD } from "./config.js?v=20260630-results-gsap";
+import { BOSS_MAX_HP, CHARACTERS, SKILLS, WORLD } from "./config.js?v=20260701-boss-meteors";
 import { mulberry32 } from "./utils.js";
 
 export function createGameState() {
@@ -31,6 +31,7 @@ export function createGameState() {
       velocityY: 0,
       facingAngle: 0,
       facingSign: 1,
+      attackTimer: 0,
       dash: {
         cooldown: 1,
         hitCount: 0,
@@ -49,6 +50,7 @@ export function createGameState() {
         lightning: 0.45,
         frost: 3.2,
         wind: 1.6,
+        shuriken: 0.4,
       },
     },
     boss: {
@@ -60,6 +62,8 @@ export function createGameState() {
       contactCooldown: 0,
       orbTimer: 1.6,
       hazardTimer: 5.2,
+      meteorTimer: 6,
+      hasteTimer: 0,
       summonTimer: 8,
       weakPulse: 0,
       castTimer: 0,
@@ -77,6 +81,8 @@ export function createGameState() {
     expOrbs: [],
     hostileProjectiles: [],
     playerProjectiles: [],
+    ultimateEffects: [],
+    timeStopTimer: 0,
     hazards: [],
     particles: [],
     rings: [],

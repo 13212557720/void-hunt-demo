@@ -418,9 +418,13 @@ button {
   letter-spacing: 0;
 }
 
+.character-box {
+  width: min(1040px, 100%);
+}
+
 .character-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-top: 18px;
 }
@@ -472,6 +476,19 @@ button {
   background:
     radial-gradient(circle at 84% 20%, rgba(126, 235, 255, 0.26), transparent 26%),
     radial-gradient(circle at 14% 82%, rgba(58, 117, 255, 0.2), transparent 34%);
+}
+
+.childzed-card {
+  background:
+    linear-gradient(140deg, rgba(198, 36, 66, 0.22), rgba(12, 11, 18, 0.94)),
+    rgba(16, 13, 20, 0.98);
+}
+
+.childzed-card::before {
+  background:
+    radial-gradient(circle at 80% 18%, rgba(255, 62, 92, 0.24), transparent 27%),
+    radial-gradient(circle at 16% 84%, rgba(20, 20, 24, 0.7), transparent 34%),
+    linear-gradient(135deg, transparent 48%, rgba(255, 255, 255, 0.1) 49%, transparent 52%);
 }
 
 .character-card:hover,

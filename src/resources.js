@@ -30,6 +30,18 @@ export function createSpriteSheets() {
         { x: 1168, y: 572, w: 340, h: 380 },
       ],
     }),
+    childzed: createSpriteSheet("assets/childzed.png", false, {
+      idle: [
+        { x: 0, y: 0, w: 512, h: 512, anchorX: 0.5, anchorY: 0.9 },
+      ],
+      move: [
+        { x: 512, y: 0, w: 512, h: 512, anchorX: 0.5, anchorY: 0.88 },
+        { x: 1024, y: 0, w: 512, h: 512, anchorX: 0.5, anchorY: 0.88 },
+      ],
+      throw: [
+        { x: 1024, y: 0, w: 512, h: 512, anchorX: 0.5, anchorY: 0.88 },
+      ],
+    }),
     boss: createSpriteSheet("assets/boss.png", false, {
       idle: [
         { x: 0, y: 0, w: 275, h: 435, anchorX: 0.42, anchorY: 0.58 },

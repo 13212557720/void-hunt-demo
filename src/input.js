@@ -65,6 +65,7 @@ export function createInputController(ui, actions) {
     if (state === "characterSelect") {
       if (key === "1") actions.selectCharacter("storm");
       if (key === "2") actions.selectCharacter("windman");
+      if (key === "3") actions.selectCharacter("childzed");
     }
 
     if (state === "playing" && key === "r" && !event.repeat) {

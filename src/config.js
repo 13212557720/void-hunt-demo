@@ -13,6 +13,26 @@ export const MAX_FLOATING_TEXTS = 90;
 export const ENEMY_SPATIAL_CELL_SIZE = 220;
 export const ENEMY_QUERY_PADDING = 42;
 
+export const XP_CURVE = {
+  base: 8,
+  linearPerLevel: 4.5,
+  levelExponent: 1.32,
+  lateStartLevel: 8,
+  lateExponent: 1.35,
+  lateMultiplier: 2.2,
+};
+
+export const LIFE_STEAL_BALANCE = {
+  increment: 0.02,
+  max: 0.1,
+  healCap: 4,
+};
+
+function applyUltimateUpgrade(player, maxLevel) {
+  player.ultimate.level = Math.min(maxLevel, player.ultimate.level + 1);
+  player.ultimate.charges += 1;
+}
+
 export const CHARACTERS = {
   storm: {
     id: "storm",
@@ -39,12 +59,25 @@ export const CHARACTERS = {
       tornado: 1,
     },
   },
+  childzed: {
+    id: "childzed",
+    name: "儿童劫",
+    openingTitle: "选择开局影刃",
+    levelTitle: "影刃童心觉醒",
+    victoryReason: "儿童劫笑着收下了胜利",
+    maxHp: 95,
+    speedMultiplier: 1.12,
+    initialSkills: {
+      shuriken: 1,
+    },
+  },
 };
 
 export const COMMON_SKILL_IDS = ["frost", "wind", "orbs", "shield", "storm"];
 export const CHARACTER_SKILL_IDS = {
   storm: ["lightning"],
   windman: ["dash", "tornado"],
+  childzed: ["shuriken"],
 };
 
 export const PHASES = {
@@ -177,6 +210,12 @@ export const SKILLS = {
     owner: "windman",
     desc: "每 3 次踏前斩后，朝 Boss 方向释放一道穿透龙卷风。",
   },
+  shuriken: {
+    name: "影手里剑",
+    type: "技能",
+    owner: "childzed",
+    desc: "自动朝 Boss 投掷无限穿透手里剑，升级后伤害提高、冷却缩短。",
+  },
   frost: {
     name: "冰霜环",
     type: "技能",
@@ -204,15 +243,39 @@ export const SKILLS = {
   },
 };
 
-export const ULTIMATE_UPGRADE = {
-  id: "ultimate",
-  kind: "ultimate",
-  type: "大招",
-  name: "天穹雷罚",
-  desc: "获得 1 次 R 键大招充能。释放后召唤大范围雷暴，清场并重创 Boss。",
-  apply(player) {
-    player.ultimate.level = Math.min(6, player.ultimate.level + 1);
-    player.ultimate.charges += 1;
+export const ULTIMATES = {
+  storm: {
+    id: "ultimate",
+    kind: "ultimate",
+    type: "大招",
+    name: "复苏季风",
+    maxLevel: 6,
+    desc: "获得 1 次 R 键大招充能。释放后创建 10 秒风场，入场加速回血，敌人持续掉血。",
+    apply(player) {
+      applyUltimateUpgrade(player, this.maxLevel);
+    },
+  },
+  windman: {
+    id: "ultimate",
+    kind: "ultimate",
+    type: "大招",
+    name: "狂风绝息斩",
+    maxLevel: 6,
+    desc: "获得 1 次 R 键大招充能。释放后回血 20，并召唤横扫战场的疾风冲击波。",
+    apply(player) {
+      applyUltimateUpgrade(player, this.maxLevel);
+    },
+  },
+  childzed: {
+    id: "ultimate",
+    kind: "ultimate",
+    type: "大招",
+    name: "暗域影杀阵",
+    maxLevel: 6,
+    desc: "获得 1 次 R 键大招充能。释放后短暂时停，召唤分身围绕 Boss 连续投掷影手里剑。",
+    apply(player) {
+      applyUltimateUpgrade(player, this.maxLevel);
+    },
   },
 };
 
@@ -239,15 +302,21 @@ export const STAT_UPGRADES = [
   {
     id: "lifeSteal",
     name(player) {
-      return player.lifeSteal > 0 ? `生命偷取 +4%（当前 ${Math.round(player.lifeSteal * 100)}%）` : "解锁 生命偷取";
+      const incrementPercent = Math.round(LIFE_STEAL_BALANCE.increment * 100);
+      return player.lifeSteal > 0
+        ? `生命偷取 +${incrementPercent}%（当前 ${Math.round(player.lifeSteal * 100)}%）`
+        : `解锁 生命偷取 +${incrementPercent}%`;
     },
     type: "属性",
-    desc: "造成伤害时按比例回复生命，最多叠加到 20%。",
+    desc: `造成伤害时按比例回复生命，最多叠加到 ${Math.round(LIFE_STEAL_BALANCE.max * 100)}%。`,
     isAvailable(player) {
-      return player.lifeSteal < 0.2;
+      return player.lifeSteal < LIFE_STEAL_BALANCE.max;
     },
     apply(player) {
-      player.lifeSteal = Math.min(0.2, player.lifeSteal + 0.04);
+      player.lifeSteal = Math.min(
+        LIFE_STEAL_BALANCE.max,
+        Number((player.lifeSteal + LIFE_STEAL_BALANCE.increment).toFixed(4))
+      );
     },
   },
   {

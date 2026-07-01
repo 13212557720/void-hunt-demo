@@ -6,6 +6,7 @@ import {
   ENEMY_QUERY_PADDING,
   ENEMY_SPATIAL_CELL_SIZE,
   ENEMY_TYPES,
+  LIFE_STEAL_BALANCE,
   MAX_CHESTS,
   MAX_BOLTS,
   MAX_ENEMIES,
@@ -17,13 +18,14 @@ import {
   RENDER_MARGIN,
   SKILLS,
   STAT_UPGRADES,
-  ULTIMATE_UPGRADE,
+  ULTIMATES,
   WEAK_START,
   WORLD,
-} from "./config.js?v=20260630-results-gsap";
+  XP_CURVE,
+} from "./config.js?v=20260701-boss-meteors";
 import { createSpatialIndex } from "./performance.js";
-import { createGameState, createSkillLevels } from "./state.js?v=20260630-results-gsap";
-import { hideStartVideo, updateTouchUltimateButton } from "./ui.js?v=20260630-results-gsap";
+import { createGameState, createSkillLevels } from "./state.js?v=20260701-boss-meteors";
+import { hideStartVideo, updateTouchUltimateButton } from "./ui.js?v=20260701-boss-meteors";
 import { clamp, colorWithAlpha, distanceBetween, formatTime, lerp, randomLike, randomRange, shuffle } from "./utils.js";
 
 export function createVoidHuntGame({ canvas, ctx, input, perf, sprites, ui }) {
@@ -50,6 +52,11 @@ const RESULT_IMAGES = {
     src: "assets/results/windman-defeat.jpg",
     alt: "快乐风男战败图",
     caption: "快乐风男倒在风暴中心",
+  },
+  childzed: {
+    src: "assets/results/childzed-defeat.jpg",
+    alt: "儿童劫战败图",
+    caption: "儿童劫憋笑退场",
   },
 };
 
@@ -84,11 +91,13 @@ function selectCharacter(characterId) {
   player.hp = character.maxHp;
   player.lifeSteal = 0;
   player.speedMultiplier = character.speedMultiplier;
+  player.attackTimer = 0;
   player.skills = createSkillLevels(character.initialSkills);
   player.cooldowns = {
     lightning: 0.45,
     frost: 3.2,
     wind: 1.6,
+    shuriken: 0.4,
   };
   player.dash = {
     cooldown: 0.45,
@@ -155,20 +164,29 @@ function updateGame(dt) {
   game.shake = Math.max(0, game.shake - dt * 18);
   game.player.ultimate.castTimer = Math.max(0, game.player.ultimate.castTimer - dt);
   game.player.dash.slashTimer = Math.max(0, game.player.dash.slashTimer - dt);
+  game.player.attackTimer = Math.max(0, game.player.attackTimer - dt);
+  game.timeStopTimer = Math.max(0, game.timeStopTimer - dt);
   if (input.consumeUltimatePressed()) {
     castUltimate();
   }
 
+  const worldStopped = game.timeStopTimer > 0;
+
   updatePhase();
   updatePlayer(dt);
-  updateBoss(dt);
-  updateEnemySpawner(dt);
-  updateChests(dt);
-  updateEnemies(dt);
+  if (!worldStopped) {
+    updateBoss(dt);
+    updateEnemySpawner(dt);
+    updateChests(dt);
+    updateEnemies(dt);
+  }
   rebuildEnemyIndex();
-  updateHostileProjectiles(dt);
-  updateHazards(dt);
+  if (!worldStopped) {
+    updateHostileProjectiles(dt);
+    updateHazards(dt);
+  }
   updateSkills(dt);
+  updateUltimateEffects(dt);
   updatePlayerProjectiles(dt);
   updateExpOrbs(dt);
   updateEffects(dt);
@@ -214,7 +232,7 @@ function updatePlayer(dt) {
   const dx = movement.x;
   const dy = movement.y;
   const length = Math.hypot(dx, dy) || 1;
-  const speed = PLAYER_BASE_SPEED * player.speedMultiplier;
+  const speed = PLAYER_BASE_SPEED * player.speedMultiplier * getActiveMonsoonSpeedMultiplier();
   player.velocityX = (dx / length) * speed;
   player.velocityY = (dy / length) * speed;
 
@@ -281,10 +299,12 @@ function updateBoss(dt) {
   const phase = PHASES[game.phase];
   const angle = Math.atan2(player.y - boss.y, player.x - boss.x);
   const distance = distanceBetween(boss, player);
+  boss.hasteTimer = Math.max(0, boss.hasteTimer - dt);
+  const speedMultiplier = boss.hasteTimer > 0 ? 1.5 : 1;
 
   if (distance > boss.radius + player.radius + 28) {
-    boss.x += Math.cos(angle) * phase.bossSpeed * dt;
-    boss.y += Math.sin(angle) * phase.bossSpeed * dt;
+    boss.x += Math.cos(angle) * phase.bossSpeed * speedMultiplier * dt;
+    boss.y += Math.sin(angle) * phase.bossSpeed * speedMultiplier * dt;
   }
 
   boss.x = clamp(boss.x, boss.radius, WORLD.width - boss.radius);
@@ -308,6 +328,13 @@ function updateBoss(dt) {
   if (boss.hazardTimer <= 0) {
     createBossHazard();
     boss.hazardTimer = phase.hazardCooldown;
+  }
+
+  boss.meteorTimer -= dt;
+  if (boss.meteorTimer <= 0) {
+    createBossMeteors();
+    boss.meteorTimer = 6;
+    boss.hasteTimer = 2;
   }
 
   boss.summonTimer -= dt;
@@ -442,8 +469,9 @@ function openChest(chest) {
     addFloatingText(chest.x, chest.y - 44, "宝箱馈赠", "#ffd36b");
     openLevelUp("chest");
   } else if (roll < 2 / 3) {
+    const ultimate = getUltimateConfig();
     addFloatingText(chest.x, chest.y - 44, "免费大招", "#ffe27a");
-    showBanner("宝箱雷罚", 1.45);
+    showBanner(`宝箱：${ultimate.name}`, 1.45);
     castUltimate({ free: true, levelOverride: Math.max(1, game.player.ultimate.level) });
   } else {
     addFloatingText(chest.x, chest.y - 44, "虚空伏击", "#ff7bb0");
@@ -547,14 +575,16 @@ function updateHazards(dt) {
   const player = game.player;
 
   for (const hazard of game.hazards) {
+    const isMeteor = hazard.kind === "meteor";
+    const color = isMeteor ? "#3b184f" : "#b767ff";
     hazard.delay -= dt;
     hazard.life -= dt;
 
     if (!hazard.exploded && hazard.delay <= 0) {
       hazard.exploded = true;
-      hazard.life = 0.42;
-      createRing(hazard.x, hazard.y, hazard.radius + 32, "#b767ff", 0.36, 7);
-      burst(hazard.x, hazard.y, 34, "#b767ff", 260, 0.55);
+      hazard.life = isMeteor ? 0.34 : 0.42;
+      createRing(hazard.x, hazard.y, hazard.radius + (isMeteor ? 24 : 32), color, 0.34, isMeteor ? 5 : 7);
+      burst(hazard.x, hazard.y, isMeteor ? 18 : 34, color, isMeteor ? 190 : 260, isMeteor ? 0.42 : 0.55);
 
       if (distanceBetween(hazard, player) < hazard.radius + player.radius * 0.25) {
         damagePlayer(hazard.damage);
@@ -583,6 +613,10 @@ function updateSkills(dt) {
 
   if (player.skills.dash > 0) {
     tryCastSweepingDash();
+  }
+
+  if (player.skills.shuriken > 0 && player.cooldowns.shuriken <= 0) {
+    castShuriken();
   }
 
   if (player.skills.frost > 0 && player.cooldowns.frost <= 0) {
@@ -622,7 +656,7 @@ function updatePlayerProjectiles(dt) {
       if (distanceBetween(projectile, enemy) < projectile.radius + enemy.radius) {
         projectile.hitIds.add(enemy.id);
         damageEnemy(enemy, projectile.damage, projectile.kind || "wind");
-        burst(enemy.x, enemy.y, projectile.kind === "tornado" ? 12 : 7, "#9ffff4", projectile.kind === "tornado" ? 170 : 110, 0.3);
+        burst(enemy.x, enemy.y, projectile.kind === "tornado" ? 12 : 7, getProjectileImpactColor(projectile), projectile.kind === "tornado" ? 170 : 110, 0.3);
         if (projectile.kind !== "tornado") {
           projectile.pierce -= 1;
         }
@@ -653,8 +687,8 @@ function updatePlayerProjectiles(dt) {
 
     if (!projectile.remove && !projectile.hitBoss && distanceBetween(projectile, boss) < projectile.radius + boss.radius) {
       projectile.hitBoss = true;
-      damageBoss(projectile.kind === "tornado" ? projectile.bossDamage : projectile.damage * 1.25, projectile.kind || "wind");
-      createBolt(projectile.x, projectile.y, boss.x, boss.y, "#9ffff4", projectile.kind === "tornado" ? 0.16 : 0.1);
+      damageBoss(projectile.bossDamage ?? projectile.damage * 1.25, projectile.kind || "wind");
+      createBolt(projectile.x, projectile.y, boss.x, boss.y, getProjectileImpactColor(projectile), projectile.kind === "tornado" ? 0.16 : 0.1);
       if (projectile.kind !== "tornado") {
         projectile.pierce -= 2;
       }
@@ -665,6 +699,122 @@ function updatePlayerProjectiles(dt) {
   }
 
   game.playerProjectiles = game.playerProjectiles.filter((projectile) => !projectile.remove);
+}
+
+function getProjectileImpactColor(projectile) {
+  if (projectile.kind === "shuriken") return "#ff4768";
+  return "#9ffff4";
+}
+
+function updateUltimateEffects(dt) {
+  for (const effect of game.ultimateEffects) {
+    effect.life -= dt;
+
+    if (effect.kind === "monsoon") {
+      updateMonsoonEffect(effect, dt);
+    } else if (effect.kind === "lastBreath") {
+      updateLastBreathEffect(effect, dt);
+    } else if (effect.kind === "shadowKill") {
+      updateShadowKillEffect(effect, dt);
+    }
+
+    if (effect.life <= 0) {
+      effect.remove = true;
+    }
+  }
+
+  game.ultimateEffects = game.ultimateEffects.filter((effect) => !effect.remove);
+}
+
+function updateMonsoonEffect(effect, dt) {
+  const player = game.player;
+  const center = { x: effect.x, y: effect.y };
+  effect.pulse += dt * 2.2;
+  effect.healText = Math.max(0, effect.healText - dt);
+
+  if (distanceBetween(player, center) < effect.radius + player.radius * 0.35) {
+    const gained = healPlayerFlat(effect.healPerSecond * dt, "#8bffd8", false);
+    if (gained > 0 && effect.healText <= 0) {
+      addFloatingText(player.x, player.y - 40, "+1", "#8bffd8");
+      effect.healText = 0.9;
+    }
+  }
+
+  for (const enemy of queryEnemies(effect.x, effect.y, effect.radius)) {
+    if (enemy.dead || distanceBetween(center, enemy) > effect.radius + enemy.radius) continue;
+    enemy.monsoonTick = Math.max(0, (enemy.monsoonTick || 0) - dt);
+    damageEnemy(enemy, effect.damagePerSecond * dt, "monsoon", false);
+    if (enemy.monsoonTick <= 0) {
+      enemy.monsoonTick = 0.42;
+      burst(enemy.x, enemy.y, 3, "#7effc5", 58, 0.22);
+    }
+  }
+
+  damageChestsInRadius(effect.x, effect.y, effect.radius, "monsoon", 0.55);
+
+  if (distanceBetween(center, game.boss) < effect.radius + game.boss.radius) {
+    damageBoss(effect.damagePerSecond * dt * 1.15, "monsoon");
+  }
+}
+
+function updateLastBreathEffect(effect, dt) {
+  effect.reach += effect.speed * dt;
+
+  for (const enemy of game.enemies) {
+    if (enemy.dead || effect.hitIds.has(enemy.id)) continue;
+    if (!isTargetInLastBreath(enemy, effect)) continue;
+    effect.hitIds.add(enemy.id);
+    damageEnemy(enemy, effect.enemyDamage, "lastBreath");
+    createBolt(effect.originX, effect.originY, enemy.x, enemy.y, "#9ffff4", 0.14);
+    burst(enemy.x, enemy.y, 12, "#9ffff4", 190, 0.34);
+  }
+
+  if (!effect.hitBoss && isTargetInLastBreath(game.boss, effect)) {
+    effect.hitBoss = true;
+    damageBoss(effect.bossDamage, "lastBreath");
+    createBolt(effect.originX, effect.originY, game.boss.x, game.boss.y, "#9ffff4", 0.18);
+    burst(game.boss.x, game.boss.y, 22, "#9ffff4", 240, 0.42);
+  }
+
+  if (effect.reach >= effect.range + effect.width) {
+    effect.remove = true;
+  }
+}
+
+function isTargetInLastBreath(target, effect) {
+  const dx = target.x - effect.originX;
+  const dy = target.y - effect.originY;
+  const cos = Math.cos(effect.angle);
+  const sin = Math.sin(effect.angle);
+  const forward = dx * cos + dy * sin;
+  const side = Math.abs(-dx * sin + dy * cos);
+  return (
+    forward >= -90 &&
+    forward <= Math.min(effect.reach, effect.range) &&
+    side <= effect.width * 0.5 + target.radius
+  );
+}
+
+function updateShadowKillEffect(effect, dt) {
+  const age = effect.maxLife - effect.life;
+  for (const clone of effect.clones) {
+    clone.attackTimer = Math.max(0, clone.attackTimer - dt);
+    while (clone.fired < clone.shotTimes.length && age >= clone.shotTimes[clone.fired]) {
+      fireShadowCloneShuriken(clone, effect.level);
+      clone.fired += 1;
+    }
+  }
+}
+
+function getActiveMonsoonSpeedMultiplier() {
+  const player = game.player;
+  for (const effect of game.ultimateEffects) {
+    if (effect.kind !== "monsoon" || effect.remove) continue;
+    if (distanceBetween(player, effect) < effect.radius + player.radius * 0.35) {
+      return 1.28;
+    }
+  }
+  return 1;
 }
 
 function updateExpOrbs(dt) {
@@ -725,11 +875,28 @@ function updateEffects(dt) {
 
 function updateCamera() {
   const view = game.view;
-  const targetX = game.player.x - view.width / 2;
-  const targetY = game.player.y - view.height / 2;
-  game.camera.x = clamp(lerp(game.camera.x, targetX, 0.14), 0, Math.max(0, WORLD.width - view.width));
-  game.camera.y = clamp(lerp(game.camera.y, targetY, 0.14), 0, Math.max(0, WORLD.height - view.height));
+  const lockTarget = getCameraLockTarget();
+  const target = lockTarget || game.player;
+  const targetX = target.x - view.width / 2;
+  const targetY = target.y - view.height / 2;
+  const maxX = Math.max(0, WORLD.width - view.width);
+  const maxY = Math.max(0, WORLD.height - view.height);
+
+  if (lockTarget) {
+    game.camera.x = clamp(targetX, 0, maxX);
+    game.camera.y = clamp(targetY, 0, maxY);
+  } else {
+    game.camera.x = clamp(lerp(game.camera.x, targetX, 0.14), 0, maxX);
+    game.camera.y = clamp(lerp(game.camera.y, targetY, 0.14), 0, maxY);
+  }
   updateVisibleBounds();
+}
+
+function getCameraLockTarget() {
+  if (game.timeStopTimer <= 0) return null;
+  return game.ultimateEffects.some((effect) => effect.kind === "shadowKill" && !effect.remove)
+    ? game.boss
+    : null;
 }
 
 function updateVisibleBounds() {
@@ -837,6 +1004,38 @@ function castWindBlades() {
   }
 
   player.cooldowns.wind = Math.max(0.8, (1.85 - level * 0.09) * player.cooldownMultiplier);
+}
+
+function castShuriken() {
+  const player = game.player;
+  const level = player.skills.shuriken;
+  if (level <= 0) return;
+
+  const angle = Math.atan2(game.boss.y - player.y, game.boss.x - player.x);
+  const speed = 760;
+  player.facingAngle = angle;
+  player.facingSign = Math.cos(angle) < 0 ? -1 : 1;
+  player.attackTimer = 0.24;
+
+  game.playerProjectiles.push({
+    kind: "shuriken",
+    x: player.x + Math.cos(angle) * 28,
+    y: player.y + Math.sin(angle) * 28,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    angle,
+    radius: 12,
+    damage: 18 + level * 7,
+    bossDamage: 24 + level * 9,
+    pierce: Infinity,
+    life: 3.2,
+    spin: randomRange(0, Math.PI * 2),
+    hitIds: new Set(),
+    hitChestIds: new Set(),
+    hitBoss: false,
+  });
+
+  player.cooldowns.shuriken = Math.max(0.62, (1.25 - level * 0.07) * player.cooldownMultiplier);
 }
 
 function updateDashCooldowns(dt) {
@@ -987,41 +1186,164 @@ function castGaleTornado() {
   addFloatingText(player.x, player.y - 44, "疾风龙卷", "#9ffff4");
 }
 
+function getUltimateConfig(characterId = game.player.characterId) {
+  return ULTIMATES[characterId] || ULTIMATES.storm;
+}
+
+function createUltimateUpgrade() {
+  const player = game.player;
+  const ultimate = getUltimateConfig();
+  return {
+    ...ultimate,
+    name: player.ultimate.level > 0 ? `${ultimate.name} +1` : `解锁 ${ultimate.name}`,
+  };
+}
+
 function castUltimate(options = {}) {
   const player = game.player;
   const ultimate = player.ultimate;
   const free = Boolean(options.free);
+  const ultimateConfig = getUltimateConfig();
   const level = Math.max(1, options.levelOverride || ultimate.level);
   if (!free && (ultimate.charges <= 0 || ultimate.level <= 0)) return false;
 
   if (!free) {
     ultimate.charges -= 1;
   }
-  ultimate.castTimer = 0.82;
+  ultimate.castTimer = player.characterId === "childzed" ? 2.6 : 0.82;
   ultimate.castLevel = level;
-  game.shake = Math.max(game.shake, 2.4);
+  game.shake = Math.max(game.shake, player.characterId === "childzed" ? 1.9 : 2.2);
+  addFloatingText(player.x, player.y - 46, ultimateConfig.name, "#ffe27a");
 
-  const radius = 460 + level * 72;
-  const enemyDamage = 210 + level * 95;
-  const bossDamage = 430 + level * 185;
-  createRing(player.x, player.y, radius, "#ffe27a", 0.72, 8);
-  createRing(player.x, player.y, radius * 0.58, "#9ffff4", 0.55, 5);
-  burst(player.x, player.y, 70, "#ffe27a", 520, 0.82);
-  addFloatingText(player.x, player.y - 46, "天穹雷罚", "#ffe27a");
-
-  for (const enemy of queryEnemies(player.x, player.y, radius)) {
-    if (enemy.dead || distanceBetween(player, enemy) > radius + enemy.radius) continue;
-    createBolt(player.x, player.y, enemy.x, enemy.y, "#ffe27a", 0.18);
-    damageEnemy(enemy, enemyDamage, "ultimate");
-  }
-  damageChestsInRadius(player.x, player.y, radius, "ultimate");
-
-  if (distanceBetween(player, game.boss) < radius + game.boss.radius) {
-    createBolt(player.x, player.y, game.boss.x, game.boss.y, "#ffe27a", 0.24);
-    damageBoss(bossDamage, "ultimate");
+  if (player.characterId === "windman") {
+    castLastBreath(level);
+  } else if (player.characterId === "childzed") {
+    castShadowKill(level);
+  } else {
+    castMonsoon(level);
   }
 
   return true;
+}
+
+function castMonsoon(level) {
+  const player = game.player;
+  const radius = 230 + level * 18;
+  game.ultimateEffects.push({
+    kind: "monsoon",
+    x: player.x,
+    y: player.y,
+    radius,
+    level,
+    maxLife: 10,
+    life: 10,
+    damagePerSecond: 18 + level * 8,
+    healPerSecond: 1.4 + level * 0.25,
+    pulse: randomRange(0, Math.PI * 2),
+    healText: 0,
+  });
+
+  createRing(player.x, player.y, radius, "#7effc5", 0.72, 7);
+  createRing(player.x, player.y, radius * 0.56, "#9ffff4", 0.52, 4);
+  burst(player.x, player.y, 46, "#7effc5", 360, 0.72);
+}
+
+function castLastBreath(level) {
+  const player = game.player;
+  const angle = Math.atan2(game.boss.y - player.y, game.boss.x - player.x);
+  const width = 220 + level * 20;
+  const range = Math.hypot(WORLD.width, WORLD.height) + 320;
+  const speed = 1800;
+  const life = (range + 260) / speed;
+
+  healPlayerFlat(20, "#8bffd8", true);
+  player.facingAngle = angle;
+  player.facingSign = Math.cos(angle) < 0 ? -1 : 1;
+  player.dash.slashTimer = Math.max(player.dash.slashTimer, 0.38);
+
+  game.ultimateEffects.push({
+    kind: "lastBreath",
+    originX: player.x,
+    originY: player.y,
+    angle,
+    width,
+    range,
+    speed,
+    reach: -140,
+    maxLife: life,
+    life,
+    enemyDamage: 120 + level * 45,
+    bossDamage: 220 + level * 80,
+    hitIds: new Set(),
+    hitBoss: false,
+  });
+
+  createRing(player.x, player.y, width * 0.72, "#9ffff4", 0.46, 6);
+  burst(player.x, player.y, 42, "#9ffff4", 420, 0.58);
+}
+
+function castShadowKill(level) {
+  const boss = game.boss;
+  const player = game.player;
+  const duration = 2.6;
+  const cloneRadius = 148 + level * 4;
+  const clones = [];
+
+  healPlayerFlat(20, "#ff8bac", true);
+  game.timeStopTimer = Math.max(game.timeStopTimer, duration);
+  player.attackTimer = Math.max(player.attackTimer, duration);
+
+  for (let i = 0; i < 6; i += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * i) / 6;
+    clones.push({
+      x: clamp(boss.x + Math.cos(angle) * cloneRadius, 48, WORLD.width - 48),
+      y: clamp(boss.y + Math.sin(angle) * cloneRadius, 48, WORLD.height - 48),
+      angle,
+      fired: 0,
+      shotTimes: [0.24 + i * 0.045, 1.12 + i * 0.045],
+      attackTimer: 0,
+    });
+  }
+
+  game.ultimateEffects.push({
+    kind: "shadowKill",
+    x: boss.x,
+    y: boss.y,
+    radius: cloneRadius + 92,
+    level,
+    maxLife: duration,
+    life: duration,
+    clones,
+  });
+
+  createRing(boss.x, boss.y, cloneRadius + 94, "#ff4768", 0.7, 8);
+  burst(boss.x, boss.y, 44, "#ff4768", 360, 0.72);
+}
+
+function fireShadowCloneShuriken(clone, level) {
+  const angle = Math.atan2(game.boss.y - clone.y, game.boss.x - clone.x);
+  const speed = 820;
+  clone.attackTimer = 0.28;
+
+  game.playerProjectiles.push({
+    kind: "shuriken",
+    x: clone.x + Math.cos(angle) * 24,
+    y: clone.y + Math.sin(angle) * 24,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    angle,
+    radius: 12,
+    damage: 22 + level * 8,
+    bossDamage: 30 + level * 11,
+    pierce: Infinity,
+    life: 2.6,
+    spin: randomRange(0, Math.PI * 2),
+    hitIds: new Set(),
+    hitChestIds: new Set(),
+    hitBoss: false,
+  });
+
+  createBolt(clone.x, clone.y, game.boss.x, game.boss.y, "#ff4768", 0.1);
 }
 
 function updateOrbitingOrbs(dt) {
@@ -1242,6 +1564,31 @@ function createBossHazard() {
   });
 }
 
+function createBossMeteors() {
+  const player = game.player;
+  game.boss.castTimer = Math.max(game.boss.castTimer, 0.5);
+
+  for (let i = 0; i < 4; i += 1) {
+    const angle = randomRange(0, Math.PI * 2);
+    const distance = randomRange(70, 310);
+    const lead = randomRange(0.18, 0.42);
+    game.hazards.push({
+      kind: "meteor",
+      x: clamp(player.x + player.velocityX * lead + Math.cos(angle) * distance, 70, WORLD.width - 70),
+      y: clamp(player.y + player.velocityY * lead + Math.sin(angle) * distance, 70, WORLD.height - 70),
+      radius: 54,
+      delay: randomRange(0.7, 1.08),
+      life: 1.45,
+      damage: game.phase === "weak" ? 24 : game.phase === "phase3" ? 38 : 32,
+      exploded: false,
+      seed: randomRange(0, 1000),
+    });
+  }
+
+  createRing(game.boss.x, game.boss.y, 150, "#3b184f", 0.48, 4);
+  addFloatingText(game.boss.x, game.boss.y - game.boss.radius, "暗陨疾行", "#c68cff");
+}
+
 function summonBossMinions() {
   if (!Number.isFinite(PHASES[game.phase].summonCooldown)) return;
   const boss = game.boss;
@@ -1327,15 +1674,26 @@ function healPlayerFromDamage(amount) {
   const player = game.player;
   if (game.state !== "playing" || player.lifeSteal <= 0 || amount <= 0 || player.hp <= 0) return;
 
-  const heal = Math.min(8, amount * player.lifeSteal);
+  const heal = Math.min(LIFE_STEAL_BALANCE.healCap, amount * player.lifeSteal);
   if (heal <= 0.05) return;
 
-  const before = player.hp;
-  player.hp = Math.min(player.maxHp, player.hp + heal);
-  const gained = player.hp - before;
+  const gained = healPlayerFlat(heal, "#8bffd8", false);
   if (gained >= 2) {
     addFloatingText(player.x, player.y - 36, `+${Math.round(gained)}`, "#8bffd8");
   }
+}
+
+function healPlayerFlat(amount, color = "#8bffd8", showText = true) {
+  const player = game.player;
+  if (game.state !== "playing" || amount <= 0 || player.hp <= 0) return 0;
+
+  const before = player.hp;
+  player.hp = Math.min(player.maxHp, player.hp + amount);
+  const gained = player.hp - before;
+  if (showText && gained > 0) {
+    addFloatingText(player.x, player.y - 36, `+${Math.max(1, Math.round(gained))}`, color);
+  }
+  return gained;
 }
 
 function damagePlayer(amount) {
@@ -1385,8 +1743,18 @@ function tryLevelUp() {
 
   player.xp -= player.xpToNext;
   player.level += 1;
-  player.xpToNext = Math.round(8 + player.level * 4.5 + Math.pow(player.level, 1.32));
+  player.xpToNext = getXpToNext(player.level);
   openLevelUp();
+}
+
+function getXpToNext(level) {
+  const lateLevel = Math.max(0, level - XP_CURVE.lateStartLevel);
+  return Math.round(
+    XP_CURVE.base
+      + level * XP_CURVE.linearPerLevel
+      + Math.pow(level, XP_CURVE.levelExponent)
+      + Math.pow(lateLevel, XP_CURVE.lateExponent) * XP_CURVE.lateMultiplier
+  );
 }
 
 function openLevelUp(mode = "level") {
@@ -1428,22 +1796,16 @@ function pickUpgradeOptions(mode = "level") {
 
   if (mode === "chest") {
     const pool = [...skillUpgrades];
-    if (player.ultimate.level < 6) {
-      pool.push({
-        ...ULTIMATE_UPGRADE,
-        name: player.ultimate.level > 0 ? `${ULTIMATE_UPGRADE.name} +1` : `解锁 ${ULTIMATE_UPGRADE.name}`,
-      });
+    if (player.ultimate.level < getUltimateConfig().maxLevel) {
+      pool.push(createUltimateUpgrade());
     }
     shuffle(pool);
     return pool.slice(0, 3);
   }
 
   const pool = [...skillUpgrades];
-  if (player.ultimate.level < 6) {
-    pool.push({
-      ...ULTIMATE_UPGRADE,
-      name: player.ultimate.level > 0 ? `${ULTIMATE_UPGRADE.name} +1` : `解锁 ${ULTIMATE_UPGRADE.name}`,
-    });
+  if (player.ultimate.level < getUltimateConfig().maxLevel) {
+    pool.push(createUltimateUpgrade());
   }
 
   for (const upgrade of STAT_UPGRADES) {
@@ -1829,6 +2191,10 @@ function roundedRectPath(x, y, width, height, radius) {
 function drawHazards() {
   for (const hazard of game.hazards) {
     if (!isVisible(hazard.x, hazard.y, hazard.radius + RENDER_MARGIN)) continue;
+    if (hazard.kind === "meteor") {
+      drawMeteorHazard(hazard);
+      continue;
+    }
     ctx.save();
     ctx.translate(hazard.x, hazard.y);
     if (!hazard.exploded) {
@@ -1857,33 +2223,193 @@ function drawHazards() {
   }
 }
 
-function drawUltimateEffect() {
-  const player = game.player;
-  const timer = player.ultimate.castTimer;
-  if (timer <= 0) return;
+function drawMeteorHazard(hazard) {
+  const progress = clamp(1 - hazard.delay / 1.08, 0, 1);
+  const pulse = 0.55 + Math.sin(game.elapsed * 9 + (hazard.seed || 0)) * 0.18;
 
-  const alpha = clamp(timer / 0.82, 0, 1);
-  const radius = 460 + Math.max(player.ultimate.level, player.ultimate.castLevel || 0) * 72;
   ctx.save();
+  ctx.translate(hazard.x, hazard.y);
   ctx.globalCompositeOperation = "lighter";
-  const field = ctx.createRadialGradient(player.x, player.y, 30, player.x, player.y, radius);
-  field.addColorStop(0, `rgba(255, 226, 122, ${0.24 * alpha})`);
-  field.addColorStop(0.42, `rgba(120, 244, 255, ${0.1 * alpha})`);
-  field.addColorStop(1, "rgba(255, 226, 122, 0)");
-  ctx.fillStyle = field;
-  ctx.beginPath();
-  ctx.arc(player.x, player.y, radius, 0, Math.PI * 2);
-  ctx.fill();
 
-  ctx.strokeStyle = `rgba(255, 226, 122, ${0.62 * alpha})`;
-  ctx.lineWidth = 5;
-  for (let i = 0; i < 8; i += 1) {
-    const angle = game.elapsed * 2 + (Math.PI * 2 * i) / 8;
+  if (!hazard.exploded) {
+    ctx.strokeStyle = `rgba(196, 114, 255, ${0.3 + progress * 0.38})`;
+    ctx.fillStyle = `rgba(59, 24, 79, ${0.08 + progress * 0.12})`;
+    ctx.lineWidth = 2.5 + progress * 3;
     ctx.beginPath();
-    ctx.moveTo(player.x + Math.cos(angle) * 34, player.y + Math.sin(angle) * 34);
-    ctx.lineTo(player.x + Math.cos(angle + 0.16) * radius * 0.92, player.y + Math.sin(angle + 0.16) * radius * 0.92);
+    ctx.arc(0, 0, hazard.radius * (0.72 + progress * 0.28), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    const orbY = -140 * (1 - progress) - 34;
+    const orbRadius = hazard.radius * (0.42 + progress * 0.16 + pulse * 0.04);
+    const orb = ctx.createRadialGradient(-orbRadius * 0.28, orbY - orbRadius * 0.28, 2, 0, orbY, orbRadius * 1.35);
+    orb.addColorStop(0, "rgba(214, 162, 255, 0.82)");
+    orb.addColorStop(0.35, "rgba(84, 36, 116, 0.82)");
+    orb.addColorStop(1, "rgba(9, 5, 16, 0.9)");
+    ctx.fillStyle = orb;
+    ctx.shadowColor = "#7b3fff";
+    ctx.shadowBlur = perf.shouldReduceEffects() ? 0 : 18;
+    ctx.beginPath();
+    ctx.arc(0, orbY, orbRadius, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const alpha = clamp(hazard.life / 0.34, 0, 1);
+    ctx.fillStyle = `rgba(59, 24, 79, ${0.28 * alpha})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, hazard.radius + 22 * (1 - alpha), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(198, 140, 255, ${0.46 * alpha})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, hazard.radius * (1.05 + (1 - alpha) * 0.25), 0, Math.PI * 2);
     ctx.stroke();
   }
+
+  ctx.restore();
+}
+
+function drawUltimateEffect() {
+  for (const effect of game.ultimateEffects) {
+    if (effect.kind === "monsoon") {
+      drawMonsoonEffect(effect);
+    } else if (effect.kind === "lastBreath") {
+      drawLastBreathEffect(effect);
+    } else if (effect.kind === "shadowKill") {
+      drawShadowKillEffect(effect);
+    }
+  }
+}
+
+function drawMonsoonEffect(effect) {
+  if (!isVisible(effect.x, effect.y, effect.radius + RENDER_MARGIN)) return;
+
+  const fade = Math.min(1, (effect.maxLife - effect.life) * 2.4, effect.life * 2.2);
+  const pulse = Math.sin(game.elapsed * 3.8 + effect.pulse) * 0.5 + 0.5;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const field = ctx.createRadialGradient(effect.x, effect.y, 28, effect.x, effect.y, effect.radius);
+  field.addColorStop(0, `rgba(126, 255, 197, ${0.22 * fade})`);
+  field.addColorStop(0.56, `rgba(80, 223, 255, ${0.09 * fade})`);
+  field.addColorStop(1, "rgba(126, 255, 197, 0)");
+  ctx.fillStyle = field;
+  ctx.beginPath();
+  ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(126, 255, 197, ${(0.3 + pulse * 0.24) * fade})`;
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 4; i += 1) {
+    const angle = game.elapsed * (0.75 + i * 0.08) + (Math.PI * 2 * i) / 4;
+    ctx.beginPath();
+    ctx.arc(effect.x, effect.y, effect.radius * (0.34 + i * 0.14), angle, angle + Math.PI * 1.22);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawLastBreathEffect(effect) {
+  const drawReach = clamp(effect.reach, 0, effect.range);
+  if (drawReach <= 0) return;
+
+  const alpha = clamp(effect.life / effect.maxLife, 0, 1);
+  const front = Math.min(effect.reach, effect.range);
+  ctx.save();
+  ctx.translate(effect.originX, effect.originY);
+  ctx.rotate(effect.angle);
+  ctx.globalCompositeOperation = "lighter";
+
+  const gradient = ctx.createLinearGradient(0, 0, front, 0);
+  gradient.addColorStop(0, `rgba(126, 235, 255, ${0.04 * alpha})`);
+  gradient.addColorStop(0.72, `rgba(126, 235, 255, ${0.18 * alpha})`);
+  gradient.addColorStop(1, `rgba(255, 255, 255, ${0.34 * alpha})`);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.moveTo(-80, -effect.width * 0.42);
+  ctx.lineTo(front, -effect.width * 0.5);
+  ctx.lineTo(front + 90, 0);
+  ctx.lineTo(front, effect.width * 0.5);
+  ctx.lineTo(-80, effect.width * 0.42);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(159, 255, 244, ${0.62 * alpha})`;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(Math.max(0, front - 260), -effect.width * 0.5);
+  ctx.quadraticCurveTo(front - 80, 0, Math.max(0, front - 260), effect.width * 0.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawShadowKillEffect(effect) {
+  if (!isVisible(effect.x, effect.y, effect.radius + RENDER_MARGIN)) return;
+
+  const fade = Math.min(1, (effect.maxLife - effect.life) * 4, effect.life * 2.4);
+  const pulse = 0.6 + Math.sin(game.elapsed * 12) * 0.18;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const domain = ctx.createRadialGradient(effect.x, effect.y, 16, effect.x, effect.y, effect.radius);
+  domain.addColorStop(0, `rgba(255, 71, 104, ${0.18 * fade})`);
+  domain.addColorStop(0.54, `rgba(21, 8, 24, ${0.2 * fade})`);
+  domain.addColorStop(1, "rgba(255, 71, 104, 0)");
+  ctx.fillStyle = domain;
+  ctx.beginPath();
+  ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(255, 71, 104, ${(0.42 + pulse * 0.18) * fade})`;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(effect.x, effect.y, effect.radius * (0.74 + pulse * 0.03), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  for (const clone of effect.clones) {
+    drawShadowClone(clone, effect);
+  }
+}
+
+function drawShadowClone(clone, effect) {
+  const sprite = SPRITE_SHEETS.childzed;
+  const angle = Math.atan2(game.boss.y - clone.y, game.boss.x - clone.x);
+  const facingSign = Math.cos(angle) < 0 ? -1 : 1;
+  const alpha = 0.55 + Math.sin(game.elapsed * 14 + clone.angle) * 0.12;
+
+  ctx.save();
+  ctx.translate(clone.x, clone.y);
+  ctx.globalAlpha = clamp(alpha, 0.38, 0.72) * Math.min(1, effect.life * 2.4);
+  ctx.globalCompositeOperation = "lighter";
+
+  if (sprite.loaded && sprite.source) {
+    const frame = sprite.frames.throw[0];
+    const visualHeight = clone.attackTimer > 0 ? 82 : 74;
+    const scale = visualHeight / frame.h;
+    const drawWidth = frame.w * scale;
+    const drawHeight = frame.h * scale;
+    ctx.scale(facingSign, 1);
+    ctx.shadowColor = "#ff4768";
+    ctx.shadowBlur = perf.shouldReduceEffects() ? 0 : 16;
+    ctx.drawImage(
+      sprite.source,
+      frame.x,
+      frame.y,
+      frame.w,
+      frame.h,
+      -drawWidth * frame.anchorX,
+      18 - drawHeight * frame.anchorY,
+      drawWidth,
+      drawHeight,
+    );
+  } else {
+    ctx.fillStyle = "rgba(20, 16, 24, 0.86)";
+    ctx.strokeStyle = "rgba(255, 71, 104, 0.82)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14, 24, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -1907,6 +2433,10 @@ function drawProjectiles() {
       drawTornadoProjectile(projectile);
       continue;
     }
+    if (projectile.kind === "shuriken") {
+      drawShurikenProjectile(projectile);
+      continue;
+    }
 
     ctx.save();
     ctx.translate(projectile.x, projectile.y);
@@ -1920,6 +2450,38 @@ function drawProjectiles() {
     ctx.fill();
     ctx.restore();
   }
+}
+
+function drawShurikenProjectile(projectile) {
+  const radius = projectile.radius;
+  ctx.save();
+  ctx.translate(projectile.x, projectile.y);
+  ctx.rotate(projectile.spin * 1.8);
+  ctx.globalCompositeOperation = "lighter";
+  ctx.shadowColor = "#ff4768";
+  ctx.shadowBlur = perf.shouldReduceEffects() ? 0 : 14;
+  ctx.lineWidth = 1.4;
+
+  for (let i = 0; i < 4; i += 1) {
+    ctx.rotate(Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.15, -radius * 0.22);
+    ctx.lineTo(radius * 1.85, -radius * 0.72);
+    ctx.lineTo(radius * 0.72, 0);
+    ctx.lineTo(radius * 1.85, radius * 0.72);
+    ctx.lineTo(-radius * 0.15, radius * 0.22);
+    ctx.closePath();
+    ctx.fillStyle = "#17131b";
+    ctx.strokeStyle = "rgba(255, 71, 104, 0.92)";
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.38, 0, Math.PI * 2);
+  ctx.fillStyle = "#ff4768";
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawTornadoProjectile(projectile) {
@@ -2415,6 +2977,9 @@ function drawPlayer() {
 }
 
 function drawCharacterSprite(player) {
+  if (player.characterId === "childzed") {
+    return drawChildzedSprite(player);
+  }
   if (player.characterId === "windman") {
     return drawWindmanSprite(player);
   }
@@ -2555,6 +3120,74 @@ function drawWindmanSprite(player) {
   ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.arc(14, -10, 22 + pulse * 3, -0.5, Math.PI * 0.9);
+  ctx.stroke();
+  ctx.restore();
+
+  return true;
+}
+
+function drawChildzedSprite(player) {
+  const sprite = SPRITE_SHEETS.childzed;
+  if (!sprite.loaded || !sprite.source) return false;
+
+  const moving = Math.hypot(player.velocityX, player.velocityY) > 12;
+  const throwing = player.attackTimer > 0;
+  const frames = throwing ? sprite.frames.throw : moving ? sprite.frames.move : sprite.frames.idle;
+  const frameRate = moving ? 8.5 : 2.4;
+  const frame = throwing ? frames[0] : frames[Math.floor(game.elapsed * frameRate) % frames.length];
+  const blink = player.invulnerable > 0 && Math.sin(game.elapsed * 38) > 0.2;
+  const speedRatio = clamp(Math.hypot(player.velocityX, player.velocityY) / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), 0, 1);
+  const bob = Math.sin(game.elapsed * (moving ? 10 : 3.4)) * (moving ? 2.1 : 1);
+  const lean = clamp(player.velocityX / (PLAYER_BASE_SPEED * player.speedMultiplier || 1), -1, 1) * 0.17;
+  const visualHeight = throwing ? 88 : 78 + speedRatio * 4;
+  const scale = visualHeight / frame.h;
+  const drawWidth = frame.w * scale;
+  const drawHeight = frame.h * scale;
+  const footY = player.radius * 1.18;
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
+  ctx.beginPath();
+  ctx.ellipse(0, player.radius * 0.98, player.radius * 1.55, player.radius * 0.48, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (throwing) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = "rgba(255, 71, 104, 0.62)";
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(-player.facingSign * 38, -20);
+    ctx.quadraticCurveTo(-player.facingSign * 8, -7, player.facingSign * 34, 10);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.translate(0, bob);
+  ctx.rotate(throwing ? 0 : lean);
+  ctx.scale(player.facingSign, 1);
+  ctx.globalAlpha = blink ? 0.46 : 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    sprite.source,
+    frame.x,
+    frame.y,
+    frame.w,
+    frame.h,
+    -drawWidth * frame.anchorX,
+    footY - drawHeight * frame.anchorY,
+    drawWidth,
+    drawHeight,
+  );
+
+  const pulse = 0.58 + Math.sin(game.elapsed * 10) * 0.18;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = `rgba(255, 71, 104, ${0.24 + pulse * 0.28})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(10, -18, 18 + pulse * 3, -0.35, Math.PI * 0.95);
   ctx.stroke();
   ctx.restore();
 
@@ -2769,7 +3402,19 @@ function createDebugSnapshot() {
     level: game.player.level,
     hp: game.player.hp,
     ultimate: { ...game.player.ultimate },
+    timeStopTimer: game.timeStopTimer,
+    ultimateEffects: game.ultimateEffects.map((effect) => ({
+      kind: effect.kind,
+      life: effect.life,
+      level: effect.level,
+      clones: effect.clones ? effect.clones.length : 0,
+    })),
     bossHp: game.boss.hp,
+    bossTimers: {
+      meteorTimer: game.boss.meteorTimer,
+      hasteTimer: game.boss.hasteTimer,
+    },
+    camera: { ...game.camera },
     resultImage: game.resultImage,
     enemies: game.enemies.length,
     kills: game.kills,
@@ -2779,8 +3424,11 @@ function createDebugSnapshot() {
     entities: {
       enemies: game.enemies.length,
       chests: game.chests.length,
+      hazards: game.hazards.length,
+      meteors: game.hazards.filter((hazard) => hazard.kind === "meteor").length,
       playerProjectiles: game.playerProjectiles.length,
       hostileProjectiles: game.hostileProjectiles.length,
+      ultimateEffects: game.ultimateEffects.length,
       particles: game.particles.length,
       rings: game.rings.length,
       bolts: game.bolts.length,
